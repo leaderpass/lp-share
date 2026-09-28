@@ -7,8 +7,11 @@ export function Gate({ reason, next }: Readonly<{ reason: 'gone' | 'staff' | 'si
     <div className="shell">
       <div className="center">
         <div>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img className="gate-logo" src="/share-logo.png" alt="LeaderPass" />
+          <div className="signin-brand">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/share-logo.png" alt="LeaderPass" />
+            <span>Share</span>
+          </div>
           {reason === 'gone' && (<>
             <h1>This link is no longer available</h1>
             <p>Ask your LeaderPass contact for a new one.</p>
@@ -20,9 +23,7 @@ export function Gate({ reason, next }: Readonly<{ reason: 'gone' | 'staff' | 'si
           </>)}
           {reason === 'signin' && (<>
             <h1>Sign in to view</h1>
-            <p>This share is for specific people. Enter your email and we&rsquo;ll send you a secure link.</p>
-            <SignInForm next={next} />
-            <p className="gate-staff"><a href={staffHref}>LeaderPass staff</a></p>
+            <SignInForm next={next} hint={<>This share is for specific people. Enter your email and we&rsquo;ll send you a secure link.</>} />
           </>)}
           {reason === 'not-listed' && (<>
             <h1>This share isn&rsquo;t addressed to you</h1>

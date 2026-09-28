@@ -729,7 +729,6 @@
 }
 
 /* Access gate. */
-.gate-logo { height: 18px; width: auto; display: block; margin: 0 auto 26px; }
 .gate-staff { margin-top: 22px; font-size: 12px; }
 .gate-staff a { color: var(--muted-soft); }
 
