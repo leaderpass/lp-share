@@ -28,13 +28,16 @@ function saveName(n: string) {
 
 type MenuItem = { label: string; onClick: () => void } | 'sep';
 
-export function ShareViewer({ model, solo = false }: Readonly<{ model: ViewModel; solo?: boolean }>) {
+export function ShareViewer({ model, solo = false, initialAssetId }: Readonly<{ model: ViewModel; solo?: boolean; initialAssetId?: string }>) {
   const { share, viewer } = model;
   const caps = share.caps;
   const items = useMemo(() => model.groups.flatMap((g) => g.items), [model.groups]);
   const staff = !!viewer.staff;
 
-  const [assetId, setAssetId] = useState<string | null>(items[0]?.assetId ?? null);
+  // ?v=<assetId> opens at that video (e.g. from an LPOS bell notification).
+  const [assetId, setAssetId] = useState<string | null>(
+    (initialAssetId && items.some((i) => i.assetId === initialAssetId) ? initialAssetId : null) ?? items[0]?.assetId ?? null,
+  );
   const [clientView, setClientView] = useState(false);
   const [sideTab, setSideTab] = useState<'comments' | 'transcript'>('comments');
   const [seekTarget, setSeekTarget] = useState<number | null>(null);

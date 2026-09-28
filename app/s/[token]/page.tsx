@@ -14,10 +14,10 @@ export function generateMetadata({ params }: { params: { token: string } }): Met
   return { title: open ? `${share!.name} · LeaderPass` : 'LeaderPass', robots: { index: false, follow: false } };
 }
 
-export default function SharePage({ params }: { params: { token: string } }) {
+export default function SharePage({ params, searchParams }: { params: { token: string }; searchParams: { v?: string } }) {
   const share = getShareByToken(params.token);
   const viewer = currentViewer();
   const access = shareAccess(share, viewer);
   if (!access.ok) return <Gate reason={access.reason} next={`/s/${params.token}`} />;
-  return <ShareViewer model={buildViewModel(share!, viewer)} />;
+  return <ShareViewer model={buildViewModel(share!, viewer)} initialAssetId={typeof searchParams.v === 'string' ? searchParams.v : undefined} />;
 }
