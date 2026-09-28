@@ -10,7 +10,7 @@ let _db: Database.Database | null = null;
 /** Lazily open the SQLite file, ensure the schema, and dev-seed if empty. */
 export function db(): Database.Database {
   if (_db) return _db;
-  const file = process.env.LINK_HUB_DB || join(process.cwd(), 'data', 'link-hub.sqlite');
+  const file = process.env.SHARE_DB || process.env.LINK_HUB_DB || join(process.cwd(), 'data', 'link-hub.sqlite');
   mkdirSync(dirname(file), { recursive: true });
   const conn = new Database(file);
   conn.pragma('foreign_keys = ON');

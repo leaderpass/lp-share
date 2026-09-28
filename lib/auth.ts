@@ -28,8 +28,8 @@ export function appOrigin(req: Request): string {
 }
 
 function secret(): string {
-  const s = process.env.LINK_HUB_SECRET;
-  if (!s || s.length < 16) throw new Error('LINK_HUB_SECRET is missing or too short');
+  const s = process.env.SHARE_SECRET || process.env.LINK_HUB_SECRET;
+  if (!s || s.length < 16) throw new Error('SHARE_SECRET is missing or too short');
   return s;
 }
 
@@ -40,13 +40,13 @@ function fromB64url(s: string): Buffer {
   return Buffer.from(s.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
 }
 
-function sign(payload: object): string {
+export function sign(payload: object): string {
   const body = b64url(Buffer.from(JSON.stringify(payload)));
   const mac = b64url(createHmac('sha256', secret()).update(body).digest());
   return `${body}.${mac}`;
 }
 
-function verify<T>(token: string): T | null {
+export function verify<T>(token: string): T | null {
   const [body, mac] = token.split('.');
   if (!body || !mac) return null;
   const expected = b64url(createHmac('sha256', secret()).update(body).digest());
