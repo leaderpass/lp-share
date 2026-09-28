@@ -2,10 +2,15 @@ import { redirect, notFound } from 'next/navigation';
 import { sessionEmail } from '@/lib/auth';
 import { getHub, emailCanAccess, hubVideos, hubsForEmail } from '@/lib/db';
 import { Library } from '@/components/Library';
+import { getShareByLegacyHub } from '@/lib/share-db';
 
 export const dynamic = 'force-dynamic';
 
 export default function HubPage({ params }: { params: { hubId: string } }) {
+  // Converted to an LP Share → the old hub URL opens the share.
+  const converted = getShareByLegacyHub(params.hubId);
+  if (converted) redirect(`/s/${converted.token}`);
+
   const email = sessionEmail();
   if (!email) redirect('/signin');
 

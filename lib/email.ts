@@ -6,7 +6,7 @@ import { Resend } from 'resend';
  *
  * Config (Doppler/Railway env):
  *   - RESEND_API_KEY      → your Resend API key (required to actually send)
- *   - LINK_HUB_MAIL_FROM  → the From address, e.g. "LeaderPass <no-reply@leaderpass.com>"
+ *   - SHARE_MAIL_FROM (or LINK_HUB_MAIL_FROM) → the From address, e.g. "LeaderPass <no-reply@leaderpass.com>"
  *                           (defaults to Resend's onboarding sender for first tests)
  *
  * Returns true if an email was sent; false if RESEND_API_KEY isn't set (the
@@ -16,7 +16,7 @@ export async function sendMagicLink(to: string, link: string): Promise<boolean> 
   const apiKey = process.env.RESEND_API_KEY?.trim();
   if (!apiKey) return false;
 
-  const from = process.env.LINK_HUB_MAIL_FROM?.trim() || 'LeaderPass <onboarding@resend.dev>';
+  const from = (process.env.SHARE_MAIL_FROM || process.env.LINK_HUB_MAIL_FROM)?.trim() || 'LeaderPass <onboarding@resend.dev>';
   const resend = new Resend(apiKey);
 
   const { error } = await resend.emails.send({
@@ -57,7 +57,7 @@ function magicLinkHtml(link: string): string {
       <table role="presentation" width="460" cellpadding="0" cellspacing="0" style="width:460px;max-width:100%;border-collapse:collapse;background:#ffffff;border:1px solid #e9e6df;border-radius:16px;overflow:hidden">
         <tr><td style="background:#121a22;padding:22px 32px 20px 32px">
           <img src="${logo}" alt="LeaderPass" width="140" style="display:block;width:140px;height:auto;border:0" />
-          <div style="font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#dbaf5f;font-weight:700;margin-top:10px">Link Hub</div>
+          <div style="font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#dbaf5f;font-weight:700;margin-top:10px">Videos</div>
         </td></tr>
         <tr><td style="padding:26px 32px 4px 32px">
           <div style="font-size:21px;line-height:1.25;font-weight:700;letter-spacing:-.01em;color:#1a1d21">Here&rsquo;s your sign-in link</div>
@@ -65,7 +65,7 @@ function magicLinkHtml(link: string): string {
         <tr><td style="padding:22px 32px 6px 32px">
           <table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse">
             <tr><td style="border-radius:10px;background:#d9a441">
-              <a href="${link}" style="display:inline-block;padding:13px 26px;font-size:15px;font-weight:700;color:#241a08;border-radius:10px;text-decoration:none">Open my Link Hub &rarr;</a>
+              <a href="${link}" style="display:inline-block;padding:13px 26px;font-size:15px;font-weight:700;color:#241a08;border-radius:10px;text-decoration:none">Open my videos &rarr;</a>
             </td></tr>
           </table>
         </td></tr>

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { mintMagicToken, appOrigin } from '@/lib/auth';
+import { safeNext } from '@/lib/viewer';
 import { sendMagicLink } from '@/lib/email';
 
 export const runtime = 'nodejs';
@@ -12,7 +13,7 @@ export const dynamic = 'force-dynamic';
  * checks access on entry. In dev the link is returned so you can click through.
  */
 export async function POST(req: Request) {
-  const { email } = (await req.json().catch(() => ({}))) as { email?: string };
+  const { email, next } = (await req.json().catch(() => ({}))) as { email?: string; next?: string };
   const clean = (email ?? '').trim().toLowerCase();
   if (!clean || !clean.includes('@')) {
     return NextResponse.json({ ok: false, error: 'invalid email' }, { status: 400 });
@@ -20,7 +21,8 @@ export async function POST(req: Request) {
 
   const token = mintMagicToken(clean);
   const origin = appOrigin(req);
-  const link = `${origin}/api/auth/callback?token=${encodeURIComponent(token)}`;
+  const back = safeNext(next, '');
+  const link = `${origin}/api/auth/callback?token=${encodeURIComponent(token)}${back ? `&next=${encodeURIComponent(back)}` : ''}`;
 
   const isDev = process.env.NODE_ENV !== 'production';
   let sent = false;

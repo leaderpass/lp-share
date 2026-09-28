@@ -7,7 +7,7 @@ const DEMO_LOGINS = [
   { email: 'priya@vanguardwealth.com', label: 'Priya — Vanguard Wealth' },
 ];
 
-export function SignInForm({ demo = false }: { demo?: boolean }) {
+export function SignInForm({ demo = false, next }: { demo?: boolean; next?: string }) {
   const [email, setEmail] = useState('');
   const [sent, setSent] = useState(false);
   const [devLink, setDevLink] = useState<string | null>(null);
@@ -20,7 +20,7 @@ export function SignInForm({ demo = false }: { demo?: boolean }) {
       const res = await fetch('/api/auth/request', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email, next }),
       });
       const data = await res.json();
       setSent(true);

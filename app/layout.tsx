@@ -1,9 +1,10 @@
 import type { Metadata } from 'next';
 import './globals.css';
+import './viewer.css';
 
 export const metadata: Metadata = {
-  title: 'LeaderPass — Video Library',
-  description: 'Your finished videos, ready to share.',
+  title: 'LeaderPass',
+  description: 'Videos from LeaderPass.',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

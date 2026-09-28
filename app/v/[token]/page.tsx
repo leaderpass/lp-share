@@ -1,5 +1,10 @@
 import { notFound } from 'next/navigation';
 import { videoByToken, recordView } from '@/lib/db';
+import { itemByVideoToken } from '@/lib/share-db';
+import { currentViewer, videoAccess } from '@/lib/viewer';
+import { buildVideoViewModel } from '@/lib/view';
+import { ShareViewer } from '@/components/ShareViewer';
+import { Gate } from '@/components/Gate';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,11 +19,23 @@ const DEMO_SAMPLES = [
 ].map((n) => `https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/${n}.mp4`);
 
 /**
- * Public share landing — no auth. The forwardable /v/{token} link opens here.
- * Real videos play from Cloudflare Stream (default player, no comments).
+ * Single-video link. LP Share items play in the share player (playback only);
+ * tokens still only in the legacy Link Hub tables fall back to the old
+ * Cloudflare embed until cutover.
  * Placeholder (demo) assets play a public sample clip instead.
  */
 export default function WatchPage({ params }: { params: { token: string } }) {
+  // LP Share video link (converted Link Hub tokens resolve here too).
+  const hit = itemByVideoToken(params.token);
+  if (hit) {
+    const viewer = currentViewer();
+    const access = videoAccess(hit.share, viewer);
+    if (!access.ok) return <Gate reason={access.reason} next={`/v/${params.token}`} />;
+    recordView(params.token);
+    return <ShareViewer solo model={buildVideoViewModel(hit.share, hit.item, viewer)} />;
+  }
+
+  // Legacy Link Hub link (until its hub is converted into a share).
   const video = videoByToken(params.token);
   if (!video) notFound();
 

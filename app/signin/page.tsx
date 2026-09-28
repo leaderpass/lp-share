@@ -8,7 +8,7 @@ export default function SignInPage() {
     <div className="shell">
       <div className="center">
         <div>
-          <div className="brand-title">LeaderPass <span>Link Hub</span></div>
+          <div className="brand-title">LeaderPass <span>Videos</span></div>
           <h1>Sign in</h1>
           <p>Enter your email and we&rsquo;ll send a secure link. No password needed.</p>
           <SignInForm demo={demo} />
