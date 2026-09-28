@@ -1,8 +1,8 @@
 {
-  "name": "lp-link-hub",
+  "name": "lp-share",
   "version": "0.1.0",
   "private": true,
-  "description": "LeaderPass Link Hub — finished-video delivery. Clients log in (magic link) to browse their hub(s) and share links to individual videos served from Cloudflare Stream.",
+  "description": "LeaderPass Share \u2014 the public app clients open share links in. LPOS pushes shares here and pulls client comments back.",
   "scripts": {
     "dev": "next dev -p 4310",
     "build": "next build",
@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "better-sqlite3": "^11.8.1",
+    "hls.js": "^1.7.3",
     "next": "^14.2.15",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
