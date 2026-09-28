@@ -735,3 +735,10 @@
 
 /* Videos without a Cloudflare thumbnail yet. */
 span.shv-thumb { background: linear-gradient(135deg, rgba(219, 175, 95, 0.16), rgba(116, 169, 226, 0.1)), var(--surface-3); }
+
+/* The player (and the title row under it) fits the window's height as well as
+   its width, so on wide-but-short windows the whole video + title stay in view.
+   190px ≈ sticky header + main padding + the title row + the small staff-link
+   footer. Same idea as .shv-solo. */
+.shv-main { align-items: center; }
+.shv-main > * { width: min(100%, calc((100dvh - 190px) * 16 / 9)); }
