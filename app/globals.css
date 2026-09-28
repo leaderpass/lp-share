@@ -37,8 +37,10 @@ a{color:inherit;text-decoration:none}
 .center p{color:var(--muted);margin:0 0 22px}
 .lp-mark{width:52px;height:52px;border-radius:14px;background:linear-gradient(145deg,var(--accent),#c2973f);display:grid;place-items:center;margin:0 auto;box-shadow:0 10px 24px -8px rgba(219,175,95,.55)}
 .lp-mark svg{width:26px;height:26px}
-.brand-title{font-size:clamp(23px,5vw,30px);font-weight:700;letter-spacing:-.02em;color:var(--text-strong);margin:0 auto 20px}
-.brand-title span{color:var(--accent)}
+.signin-brand{display:flex;align-items:center;justify-content:center;gap:12px;margin:0 auto 20px}
+.signin-brand img{height:26px;width:auto;display:block}
+.signin-brand span{font-size:30px;line-height:1;font-weight:500;letter-spacing:-.01em;color:var(--accent)}
+.center p.signin-hint{font-size:13px;margin:10px 0 0}
 .rowform{display:flex;gap:9px;width:min(410px,90vw)}
 .rowform .input{flex:1}
 .muted{color:var(--muted-soft);font-size:12.5px}

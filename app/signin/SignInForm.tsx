@@ -7,7 +7,7 @@ const DEMO_LOGINS = [
   { email: 'priya@vanguardwealth.com', label: 'Priya — Vanguard Wealth' },
 ];
 
-export function SignInForm({ demo = false, next }: { demo?: boolean; next?: string }) {
+export function SignInForm({ demo = false, next, hint }: { demo?: boolean; next?: string; hint?: React.ReactNode }) {
   const [email, setEmail] = useState('');
   const [sent, setSent] = useState(false);
   const [devLink, setDevLink] = useState<string | null>(null);
@@ -62,6 +62,7 @@ export function SignInForm({ demo = false, next }: { demo?: boolean; next?: stri
           {busy ? 'Sending…' : 'Email me a link'}
         </button>
       </form>
+      {hint && <p className="signin-hint">{hint}</p>}
 
       {demo && (
         <div style={{ marginTop: 26, width: 'min(410px, 90vw)' }}>
