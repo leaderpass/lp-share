@@ -11,7 +11,7 @@ import type {
  * changes made here are logged as events for LPOS to pull.
  */
 
-const NO_CAPS: ShareCaps = { comments: false, download: false, reshare: false, transcripts: false, internal: false };
+const NO_CAPS: ShareCaps = { comments: false, download: false, reshare: false, transcripts: false, player: true, internal: false };
 
 interface ShareRowDb { id: string; token: string; name: string; audience: string; caps: string; revoked: number; legacy_hub_id: string | null; updated_at: string }
 interface ItemRowDb extends Omit<ShareItem, 'download' | 'transcript'> { download: string | null; transcript: string | null }

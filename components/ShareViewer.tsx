@@ -202,9 +202,56 @@ export function ShareViewer({ model, solo = false, initialAssetId }: Readonly<{ 
     );
   }
 
+  // Player off: a plain list of the videos with their download buttons (for
+  // videos deliberately kept off Cloudflare, so there's nothing to stream).
+  if (!caps.player) {
+    return (
+      <div className="shv-root">
+        {header}
+        <main className="shv-list">
+          {model.groups.map((g, gi) => (
+            <div key={g.title ?? `g${gi}`} className="shv-group">
+              {g.title && <div className="shv-cat">{g.title}</div>}
+              {g.items.map((i) => (
+                <div key={i.assetId} className="shv-row-wrap">
+                  <div className={`shv-row shv-row--static${rowClassFor(caps)}`}>
+                    {i.thumbnailUrl
+                      // eslint-disable-next-line @next/next/no-img-element
+                      ? <img className="shv-thumb" src={i.thumbnailUrl} alt="" loading="lazy" />
+                      : <span className="shv-thumb" />}
+                    <span className="shv-row-text">
+                      <span className="shv-row-title">{i.title}</span>
+                      <span className="shv-row-meta">{formatDuration(i.duration)}</span>
+                    </span>
+                  </div>
+                  <span className="shv-row-actions">
+                    {caps.reshare && (
+                      <button type="button" className={`shv-icon-btn shv-row-copy${copiedKey === `row:${i.assetId}` ? ' is-copied' : ''}`}
+                        onClick={() => void copyVideoLink(i, `row:${i.assetId}`)}
+                        title={copiedKey === `row:${i.assetId}` ? 'Copied' : 'Copy video link'} aria-label="Copy video link">
+                        {copiedKey === `row:${i.assetId}` ? <IconCheck /> : <IconLink />}
+                      </button>
+                    )}
+                    {caps.download && <DownloadButton item={i} onOpen={(e) => openMenuAt(e, downloadItems(i))} />}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ))}
+        </main>
+        {!staff && (
+          <footer className="shv-foot">
+            <a href={`/staff/start?next=${encodeURIComponent(`/s/${share.token}`)}`}>LeaderPass staff</a>
+          </footer>
+        )}
+        {overlays}
+      </div>
+    );
+  }
+
   const showLib = items.length > 1;
   const cols = ['shv-body', showLib ? '' : 'shv-body--nolib', activeTab ? '' : 'shv-body--noside'].filter(Boolean).join(' ');
-  const rowClass = caps.reshare && caps.download ? ' shv-row--two' : !caps.reshare && !caps.download ? ' shv-row--none' : '';
+  const rowClass = rowClassFor(caps);
 
   return (
     <div className="shv-root">
@@ -301,6 +348,10 @@ export function ShareViewer({ model, solo = false, initialAssetId }: Readonly<{ 
       {overlays}
     </div>
   );
+}
+
+function rowClassFor(caps: ViewModel['share']['caps']): string {
+  return caps.reshare && caps.download ? ' shv-row--two' : !caps.reshare && !caps.download ? ' shv-row--none' : '';
 }
 
 /** Per-video download button: opens Original / Web / transcripts; shows progress while files are prepared. */

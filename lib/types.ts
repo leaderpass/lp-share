@@ -67,6 +67,8 @@ export interface ShareCaps {
   download: boolean;
   reshare: boolean;
   transcripts: boolean;
+  /** Video player. Off = a plain list of videos to download. Missing (older LPOS) = on. */
+  player: boolean;
   /** Staff-only share: internal comments shown, new ones stay internal. */
   internal: boolean;
 }

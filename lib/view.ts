@@ -77,7 +77,7 @@ export function buildViewModel(share: Share, v: Viewer): ViewModel {
 
 /** A single-video (/v/) view: playback only, never the parent share's token or name. */
 export function buildVideoViewModel(share: Share, item: ShareItem, v: Viewer): ViewModel {
-  const none: ShareCaps = { comments: false, download: false, reshare: false, transcripts: false, internal: false };
+  const none: ShareCaps = { comments: false, download: false, reshare: false, transcripts: false, player: true, internal: false };
   const bare: Share = { ...share, caps: none };
   return {
     share: { token: '', name: item.title, caps: none, audience: 'link' },
