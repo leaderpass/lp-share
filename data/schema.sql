@@ -134,3 +134,23 @@ CREATE TABLE IF NOT EXISTS staff_tickets_used (
   jti      TEXT PRIMARY KEY,
   used_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- Share activity for LPOS's Analytics panel and bell (see lib/activity.ts).
+-- Staff are never recorded. viewer_kind: 'email' = signed in with an email
+-- (viewer_id = the email); 'visitor' = anyone else, one per browser
+-- (viewer_id = the share_guest cookie). Repeat events from the same viewer
+-- within 30 min are folded into one, so 'open' rows read as visits.
+CREATE TABLE IF NOT EXISTS share_activity (
+  seq          INTEGER PRIMARY KEY AUTOINCREMENT,
+  share_id     TEXT NOT NULL,
+  kind         TEXT NOT NULL CHECK (kind IN ('open','video_open','download')),
+  asset_id     TEXT,                         -- video_open / download
+  file_kind    TEXT,                         -- download: original | web | srt | vtt | txt
+  viewer_kind  TEXT NOT NULL CHECK (viewer_kind IN ('visitor','email')),
+  viewer_id    TEXT NOT NULL,
+  name         TEXT,                         -- the name they typed, when known
+  first_visit  INTEGER NOT NULL DEFAULT 0,   -- 1 = this viewer's first open of this share
+  created_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_activity_share ON share_activity(share_id, seq);
+CREATE INDEX IF NOT EXISTS idx_activity_viewer ON share_activity(share_id, viewer_id, kind);

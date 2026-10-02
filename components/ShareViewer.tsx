@@ -57,6 +57,19 @@ export function ShareViewer({ model, solo = false, initialAssetId }: Readonly<{ 
     setAskName(() => (n: string | null) => { setAskName(null); resolve(n); });
   }), []);
 
+  // Count this open for LPOS's analytics. Sent from the browser (not the server
+  // render) so link previews, which never run the page, aren't counted. Staff skip it.
+  useEffect(() => {
+    if (staff) return;
+    const target = solo ? { v: items[0]?.videoToken } : { s: share.token };
+    if (!target.v && !target.s) return;
+    void fetch('/api/seen', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, keepalive: true,
+      body: JSON.stringify({ ...target, name: readName() || null }),
+    }).catch(() => { /* analytics only */ });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const item: ViewItem | null = items.find((i) => i.assetId === assetId) ?? items[0] ?? null;
 
   const commentsOn = caps.comments && !solo;

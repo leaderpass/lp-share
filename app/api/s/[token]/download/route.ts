@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { resolveShareRequest } from '@/lib/share-request';
 import { shareItems } from '@/lib/share-db';
 import { isR2Configured, presignR2Get, sanitizeFilename } from '@/lib/r2';
+import { recordActivity } from '@/lib/activity';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -32,5 +33,6 @@ export async function GET(req: Request, { params }: { params: { token: string } 
 
   const title = sanitizeFilename(item.title.replace(/\.(mp4|mov|m4v|mxf|mkv|webm|avi)$/i, ''));
   const filename = kind === 'web' ? `${title} (web).mp4` : `${title}${file.ext}`;
+  recordActivity(r.share, r.viewer, { kind: 'download', assetId: item.asset_id, fileKind: kind });
   return NextResponse.redirect(presignR2Get(file.key, filename), { status: 302, headers: { 'Cache-Control': 'no-store' } });
 }

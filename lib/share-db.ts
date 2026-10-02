@@ -132,6 +132,7 @@ export function deleteShare(shareId: string): void {
     conn.prepare('DELETE FROM share_items WHERE share_id = ?').run(shareId);
     conn.prepare('DELETE FROM share_emails WHERE share_id = ?').run(shareId);
     conn.prepare('DELETE FROM comments WHERE share_id = ?').run(shareId);
+    conn.prepare('DELETE FROM share_activity WHERE share_id = ?').run(shareId);
     conn.prepare('DELETE FROM shares WHERE id = ?').run(shareId);
   })();
 }
