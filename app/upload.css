@@ -1,0 +1,50 @@
+/* Client Upload Link page (/u/[token]). Builds on the shv-* header/modal styles. */
+.up-main{ width: 100%; max-width: 860px; margin: 0 auto; padding: 28px 16px 72px; }
+.up-greeting{ font-size: 20px; font-weight: 700; color: var(--text-strong); margin: 0 0 16px; }
+
+.up-drop{
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+  min-height: 150px; padding: 24px; border: 1.5px dashed var(--line-strong); border-radius: 13px;
+  background: var(--surface-inset); color: var(--muted); cursor: pointer; text-align: center;
+  transition: border-color .15s, background .15s, color .15s;
+}
+.up-drop:hover, .up-drop.is-over{ border-color: var(--accent); background: var(--surface-1); color: var(--text); }
+.up-drop svg{ color: var(--accent); }
+.up-drop u{ color: var(--accent-strong); text-underline-offset: 3px; }
+
+.up-queue, .up-list{ list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.up-queue{ margin-top: 14px; }
+.up-qrow{ padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); }
+.up-qrow.is-failed{ border-color: rgba(239,68,68,.45); }
+.up-qtop{ display: flex; align-items: center; gap: 10px; min-width: 0; }
+.up-qmeta{ font-size: 12px; color: var(--muted-soft); font-family: var(--mono); white-space: nowrap; margin-left: auto; }
+.up-qrow.is-failed .up-qmeta{ color: var(--red-400); font-family: var(--sans); white-space: normal; text-align: right; }
+.up-bar{ height: 4px; border-radius: 4px; background: var(--surface-3); margin-top: 8px; overflow: hidden; }
+.up-bar > div{ height: 100%; background: var(--accent); transition: width .3s ease; }
+.up-qrow.is-failed .up-bar > div{ background: var(--red-500); }
+
+.up-fname{ font-size: 14px; font-weight: 600; color: var(--text-strong); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.up-link{ font-size: 12.5px; color: var(--accent-strong); text-decoration: underline; text-underline-offset: 3px; padding: 0 2px; }
+.up-x{ width: 26px; height: 26px; flex: none; border-radius: 7px; font-size: 18px; line-height: 1; color: var(--muted-soft); display: grid; place-items: center; }
+.up-x:hover{ background: var(--surface-3); color: var(--text); }
+.up-x-spacer{ width: 26px; flex: none; }
+
+.up-controls{ display: flex; gap: 8px; margin: 26px 0 6px; flex-wrap: wrap; }
+.up-search{ flex: 1 1 180px; min-width: 0; padding: 9px 12px; border-radius: 9px; border: 1px solid var(--line); background: var(--surface-inset); color: var(--text); font-size: 13.5px; }
+.up-search:focus{ outline: none; border-color: var(--accent); }
+
+.up-group{ margin-top: 18px; }
+.up-group-label{ font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted-soft); font-weight: 600; margin: 0 0 8px; }
+.up-row{ display: flex; align-items: center; gap: 12px; padding: 10px 8px 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-inset); }
+.up-rmain{ flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.up-rmeta{ font-size: 12px; color: var(--muted-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.up-status{ flex: none; font-size: 11.5px; font-weight: 600; padding: 3px 9px; border-radius: 100px; border: 1px solid var(--line-strong); color: var(--muted); white-space: nowrap; }
+.up-status.is-added{ color: var(--green); border-color: rgba(99,194,149,.45); background: rgba(99,194,149,.12); }
+
+.up-empty{ color: var(--muted-soft); text-align: center; padding: 36px 0; margin: 0; }
+.up-error{ color: var(--red-400); font-size: 13px; }
+
+@media (max-width: 560px){
+  .up-root .shv-namefield-label{ display: none; }
+  .up-status{ font-size: 10.5px; padding: 2px 7px; }
+}

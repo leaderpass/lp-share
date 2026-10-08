@@ -154,3 +154,44 @@ CREATE TABLE IF NOT EXISTS share_activity (
 );
 CREATE INDEX IF NOT EXISTS idx_activity_share ON share_activity(share_id, seq);
 CREATE INDEX IF NOT EXISTS idx_activity_viewer ON share_activity(share_id, viewer_id, kind);
+
+-- Client Upload Links (spec §12). upload_links is a projection LPOS pushes
+-- (full replace per link). uploads are made here: a row is created when a
+-- browser starts a multipart upload and completed_at is set once R2 has the
+-- whole file. lpos_status is the client-facing status LPOS last pushed
+-- (received / added / gone; null = LPOS hasn't seen it yet).
+CREATE TABLE IF NOT EXISTS upload_links (
+  id            TEXT PRIMARY KEY,
+  token         TEXT NOT NULL UNIQUE,
+  active        INTEGER NOT NULL DEFAULT 1,
+  project_name  TEXT NOT NULL DEFAULT '',
+  client_name   TEXT NOT NULL DEFAULT '',
+  welcome_name  TEXT,
+  updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS uploads (
+  id             TEXT PRIMARY KEY,
+  link_id        TEXT NOT NULL,
+  key            TEXT NOT NULL,
+  multipart_id   TEXT NOT NULL,
+  file_name      TEXT NOT NULL,
+  size           INTEGER NOT NULL,
+  mime           TEXT NOT NULL,
+  part_size      INTEGER NOT NULL,
+  uploader_name  TEXT NOT NULL,
+  guest_id       TEXT,
+  lpos_status    TEXT,
+  created_at     TEXT NOT NULL,
+  completed_at   TEXT,
+  removed_at     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_uploads_link ON uploads(link_id, created_at);
+
+-- Upload changes for LPOS to pull (GET /api/lpos/uploads/changes?since=seq).
+CREATE TABLE IF NOT EXISTS upload_events (
+  seq         INTEGER PRIMARY KEY AUTOINCREMENT,
+  upload_id   TEXT NOT NULL,
+  kind        TEXT NOT NULL CHECK (kind IN ('uploaded','removed')),
+  created_at  TEXT NOT NULL
+);

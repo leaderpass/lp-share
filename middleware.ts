@@ -12,4 +12,4 @@ export function middleware(req: NextRequest) {
   return res;
 }
 
-export const config = { matcher: ['/s/:path*', '/v/:path*', '/api/s/:path*'] };
+export const config = { matcher: ['/s/:path*', '/v/:path*', '/api/s/:path*', '/u/:path*', '/api/u/:path*'] };
