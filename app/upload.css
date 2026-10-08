@@ -46,5 +46,7 @@
 
 @media (max-width: 560px){
   .up-root .shv-namefield-label{ display: none; }
+  .up-search{ flex-basis: 100%; }
+  .up-controls .sortsel{ flex: 1; }
   .up-status{ font-size: 10.5px; padding: 2px 7px; }
 }
