@@ -28,6 +28,10 @@ function migrateSchema(conn: Database.Database): void {
   if (!cols.some((c) => c.name === 'thumbnail_url')) {
     conn.exec('ALTER TABLE assets ADD COLUMN thumbnail_url TEXT');
   }
+  const uploadCols = conn.prepare("PRAGMA table_info('uploads')").all() as Array<{ name: string }>;
+  if (!uploadCols.some((c) => c.name === 'file_gone')) {
+    conn.exec('ALTER TABLE uploads ADD COLUMN file_gone INTEGER NOT NULL DEFAULT 0');
+  }
 }
 
 /**

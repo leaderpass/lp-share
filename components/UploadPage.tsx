@@ -8,7 +8,8 @@ import { BLOCKED_EXTENSIONS, extensionOf } from '@/lib/upload-files';
  * Client Upload Link page (spec §12.4): drop files, watch them upload
  * (browser → R2 multipart, 4 parts at a time, per-part retry, resumable after
  * a reload by dropping the same file again), and see everything sent through
- * this link.
+ * this link — by the client and by the team (§12.6) — in one list, each file
+ * downloadable straight from R2.
  */
 
 const NAME_KEY = 'lp-share:name';
@@ -18,8 +19,13 @@ const MAX_ATTEMPTS = 6;
 
 interface ListedUpload {
   id: string; name: string; uploader: string; size: number; kind: string; at: string;
-  status: 'received' | 'added'; mine: boolean; removable: boolean;
+  from: 'client' | 'team';
+  status: 'received' | 'added' | null; mine: boolean; removable: boolean;
+  downloadable: boolean; isNew: boolean; expiresAt: string | null;
 }
+
+/** Who sent it, as this browser sees it. */
+const senderOf = (u: ListedUpload) => (u.mine ? 'You' : u.uploader);
 
 interface QueueItem {
   localId: string;
@@ -96,6 +102,8 @@ function groupOf(iso: string, now: Date): string {
 }
 const GROUPS = ['Today', 'This week', 'Last week', 'Earlier'];
 
+const formatDay = (iso: string) => new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+
 function formatWhen(iso: string): string {
   const d = new Date(iso);
   const sameDay = d.toDateString() === new Date().toDateString();
@@ -110,11 +118,12 @@ export function UploadPage({ token, title, greeting }: Readonly<{ token: string;
   const [listError, setListError] = useState<string | null>(null);
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [name, setName] = useState('');
-  const [askName, setAskName] = useState<File[] | null>(null);
+  const [askName, setAskName] = useState<{ files: File[] } | { download: ListedUpload } | null>(null);
   const [dragging, setDragging] = useState(false);
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState<Sort>('newest');
   const [kind, setKind] = useState<KindFilter>('all');
+  const [from, setFrom] = useState('all');
   const [toast, setToast] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const runningRef = useRef(false);
@@ -280,9 +289,23 @@ export function UploadPage({ token, title, greeting }: Readonly<{ token: string;
 
   const addFiles = useCallback((files: File[]) => {
     if (!files.length) return;
-    if (!readName().trim()) { setAskName(files); return; }
+    if (!readName().trim()) { setAskName({ files }); return; }
     enqueue(files);
   }, [enqueue]);
+
+  const download = useCallback(async (u: ListedUpload, who = readName().trim()) => {
+    if (u.from === 'team' && !who) { setAskName({ download: u }); return; }
+    try {
+      const { url } = await api<{ url: string }>(`/api/u/${encodeURIComponent(token)}/files/${u.id}/download`, {
+        method: 'POST', body: JSON.stringify({ name: who }),
+      });
+      window.location.href = url;
+      if (u.isNew) setUploads((list) => list?.map((x) => (x.id === u.id ? { ...x, isNew: false } : x)) ?? null);
+    } catch (err) {
+      setToast((err as Error).message);
+      void refresh();
+    }
+  }, [refresh, token]);
 
   async function cancel(item: QueueItem) {
     const ctl = cancelRef.current.get(item.localId);
@@ -312,7 +335,8 @@ export function UploadPage({ token, title, greeting }: Readonly<{ token: string;
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
     const list = (uploads ?? []).filter((u) =>
-      (kind === 'all' || u.kind === kind) && (!q || u.name.toLowerCase().includes(q) || u.uploader.toLowerCase().includes(q)));
+      (kind === 'all' || u.kind === kind) && (from === 'all' || senderOf(u) === from)
+      && (!q || u.name.toLowerCase().includes(q) || u.uploader.toLowerCase().includes(q)));
     const cmp: Record<Sort, (a: ListedUpload, b: ListedUpload) => number> = {
       newest: (a, b) => b.at.localeCompare(a.at),
       oldest: (a, b) => a.at.localeCompare(b.at),
@@ -321,7 +345,7 @@ export function UploadPage({ token, title, greeting }: Readonly<{ token: string;
       type: (a, b) => a.kind.localeCompare(b.kind) || extensionOf(a.name).localeCompare(extensionOf(b.name)) || a.name.localeCompare(b.name),
     };
     return list.sort(cmp[sort]);
-  }, [uploads, query, kind, sort]);
+  }, [uploads, query, kind, from, sort]);
 
   const grouped = useMemo(() => {
     const now = new Date();
@@ -335,6 +359,11 @@ export function UploadPage({ token, title, greeting }: Readonly<{ token: string;
   }, [visible, sort]);
 
   const kinds = useMemo(() => new Set((uploads ?? []).map((u) => u.kind)), [uploads]);
+  const senders = useMemo(() => {
+    const all = [...new Set((uploads ?? []).map(senderOf))];
+    const first = (s: string) => (s === 'You' ? 0 : s === 'LeaderPass' ? 1 : 2);
+    return all.sort((a, b) => first(a) - first(b) || a.localeCompare(b));
+  }, [uploads]);
 
   return (
     <div className="shv-root up-root">
@@ -406,6 +435,12 @@ export function UploadPage({ token, title, greeting }: Readonly<{ token: string;
               <option key={k} value={k}>{{ video: 'Video', audio: 'Audio', image: 'Images', document: 'Documents', other: 'Other' }[k]}</option>
             ))}
           </select>
+          {(senders.length > 1 || from !== 'all') && (
+            <select className="sortsel" value={from} onChange={(e) => setFrom(e.target.value)} aria-label="From">
+              <option value="all">Everyone</option>
+              {senders.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          )}
           <select className="sortsel" value={sort} onChange={(e) => setSort(e.target.value as Sort)} aria-label="Sort">
             <option value="newest">Newest</option>
             <option value="oldest">Oldest</option>
@@ -426,10 +461,24 @@ export function UploadPage({ token, title, greeting }: Readonly<{ token: string;
               {g.items.map((u) => (
                 <li key={u.id} className="up-row">
                   <div className="up-rmain">
-                    <span className="up-fname" title={u.name}>{u.name}</span>
-                    <span className="up-rmeta">{u.uploader} · {formatBytes(u.size)} · {formatWhen(u.at)}</span>
+                    <span className="up-fname-line">
+                      <span className="up-fname" title={u.name}>{u.name}</span>
+                      {u.isNew && <span className="up-new">New</span>}
+                    </span>
+                    <span className="up-rmeta">
+                      {senderOf(u)} · {formatBytes(u.size)} · {formatWhen(u.at)}{u.expiresAt && ` · Until ${formatDay(u.expiresAt)}`}
+                    </span>
                   </div>
-                  <span className={`up-status${u.status === 'added' ? ' is-added' : ''}`}>{u.status === 'added' ? 'Added to project' : 'Received'}</span>
+                  {u.status && <span className={`up-status${u.status === 'added' ? ' is-added' : ''}`}>{u.status === 'added' ? 'Added to project' : 'Received'}</span>}
+                  {u.downloadable
+                    ? (
+                      <button type="button" className="up-dl" aria-label={`Download ${u.name}`} title="Download" onClick={() => void download(u)}>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" />
+                        </svg>
+                      </button>
+                    )
+                    : <span className="up-x-spacer" />}
                   {u.removable
                     ? <button type="button" className="up-x" aria-label={`Remove ${u.name}`} title="Remove" onClick={() => void remove(u)}>×</button>
                     : <span className="up-x-spacer" />}
@@ -440,19 +489,20 @@ export function UploadPage({ token, title, greeting }: Readonly<{ token: string;
         ))}
       </main>
 
-      {askName && <NamePrompt onDone={(n) => {
-        const files = askName;
+      {askName && <NamePrompt action={'files' in askName ? 'Upload' : 'Download'} onDone={(n) => {
+        const ask = askName;
         setAskName(null);
         if (!n) return;
         setName(n); saveName(n);
-        enqueue(files);
+        if ('files' in ask) enqueue(ask.files);
+        else void download(ask.download, n);
       }} />}
       {toast && <div className="shv-toast" role="status">{toast}</div>}
     </div>
   );
 }
 
-function NamePrompt({ onDone }: Readonly<{ onDone: (n: string | null) => void }>) {
+function NamePrompt({ action, onDone }: Readonly<{ action: string; onDone: (n: string | null) => void }>) {
   const [value, setValue] = useState('');
   return (
     <div className="shv-modal-overlay" onClick={() => onDone(null)}>
@@ -462,7 +512,7 @@ function NamePrompt({ onDone }: Readonly<{ onDone: (n: string | null) => void }>
         <input autoFocus value={value} maxLength={80} placeholder="Your name" onChange={(e) => setValue(e.target.value)} />
         <div className="shv-modal-actions">
           <button type="button" className="shv-btn" onClick={() => onDone(null)}>Cancel</button>
-          <button type="submit" className="shv-btn shv-btn--gold" disabled={!value.trim()}>Upload</button>
+          <button type="submit" className="shv-btn shv-btn--gold" disabled={!value.trim()}>{action}</button>
         </div>
       </form>
     </div>

@@ -1,19 +1,25 @@
 import { NextResponse } from 'next/server';
 import { randomUUID } from 'node:crypto';
-import { activeLink, guestId, rateLimited, toPublic } from '@/lib/upload-request';
-import { createUploadRow, listVisibleUploads } from '@/lib/upload-db';
+import { activeLink, guestId, rateLimited, teamToPublic, toPublic } from '@/lib/upload-request';
+import { createUploadRow, listLiveTeamFiles, listVisibleUploads, seenFileIds } from '@/lib/upload-db';
 import { createMultipart, uploadsConfigured } from '@/lib/s3';
 import { BLOCKED_EXTENSIONS, MAX_FILE_BYTES, extensionOf, mimeFor, partCount, partSizeFor, sanitizeFileName } from '@/lib/upload-files';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-/** GET — files sent through this link. */
+/** GET — files sent through this link, by the client and by the team. */
 export async function GET(_req: Request, { params }: { params: { token: string } }) {
   const r = activeLink(params.token);
   if ('res' in r) return r.res;
   const guest = guestId();
-  return NextResponse.json({ uploads: listVisibleUploads(r.link.id).map((u) => toPublic(u, guest)) });
+  const seen = seenFileIds(guest);
+  return NextResponse.json({
+    uploads: [
+      ...listVisibleUploads(r.link.id).map((u) => toPublic(u, guest)),
+      ...listLiveTeamFiles(r.link.id).map((f) => teamToPublic(f, seen)),
+    ],
+  });
 }
 
 /** POST { fileName, size, contentType, uploaderName } — start a multipart upload (spec §12.3). */

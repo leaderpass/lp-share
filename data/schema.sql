@@ -184,9 +184,43 @@ CREATE TABLE IF NOT EXISTS uploads (
   lpos_status    TEXT,
   created_at     TEXT NOT NULL,
   completed_at   TEXT,
-  removed_at     TEXT
+  removed_at     TEXT,
+  file_gone      INTEGER NOT NULL DEFAULT 0   -- LPOS deleted the stored file (retention): no download
 );
 CREATE INDEX IF NOT EXISTS idx_uploads_link ON uploads(link_id, created_at);
+
+-- Team files on a link (spec §12.6): files the team put there for the client
+-- to download. LPOS's projection (full replace per link push); offered until
+-- expires_at.
+CREATE TABLE IF NOT EXISTS upload_team_files (
+  id          TEXT PRIMARY KEY,
+  link_id     TEXT NOT NULL,
+  key         TEXT NOT NULL,
+  file_name   TEXT NOT NULL,
+  size        INTEGER NOT NULL,
+  mime        TEXT NOT NULL,
+  added_at    TEXT NOT NULL,
+  expires_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_upload_team_files_link ON upload_team_files(link_id);
+
+-- Which browser (share_guest) has downloaded which team file: drives "New".
+CREATE TABLE IF NOT EXISTS upload_file_seen (
+  file_id   TEXT NOT NULL,
+  guest_id  TEXT NOT NULL,
+  seen_at   TEXT NOT NULL,
+  PRIMARY KEY (file_id, guest_id)
+);
+
+-- Team-file downloads for LPOS to pull (GET /api/lpos/downloads/changes?since=seq).
+CREATE TABLE IF NOT EXISTS download_events (
+  seq         INTEGER PRIMARY KEY AUTOINCREMENT,
+  link_id     TEXT NOT NULL,
+  file_id     TEXT NOT NULL,
+  name        TEXT NOT NULL,
+  guest_id    TEXT,
+  created_at  TEXT NOT NULL
+);
 
 -- Upload changes for LPOS to pull (GET /api/lpos/uploads/changes?since=seq).
 CREATE TABLE IF NOT EXISTS upload_events (

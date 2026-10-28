@@ -73,6 +73,27 @@ export function presignPart(key: string, multipartId: string, partNumber: number
   return `${url.origin}${path}?${cq}&X-Amz-Signature=${signature(c.secretKey, dateStamp, sts)}`;
 }
 
+/** Presigned GET that downloads as `filename` (Content-Disposition: attachment). */
+export function presignGet(key: string, filename: string, expiresIn = 3600): string {
+  const c = need();
+  const url = new URL(c.endpoint);
+  const { amzDate, dateStamp, scope } = stamp();
+  const ascii = filename.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_');
+  const query: Record<string, string> = {
+    'X-Amz-Algorithm': 'AWS4-HMAC-SHA256',
+    'X-Amz-Credential': `${c.accessKey}/${scope}`,
+    'X-Amz-Date': amzDate,
+    'X-Amz-Expires': String(expiresIn),
+    'X-Amz-SignedHeaders': 'host',
+    'response-content-disposition': `attachment; filename="${ascii}"; filename*=UTF-8''${rfc3986(filename)}`,
+  };
+  const path = objectPath(c, key);
+  const cq = canonicalQuery(query);
+  const req = ['GET', path, cq, `host:${url.host}\n`, 'host', 'UNSIGNED-PAYLOAD'].join('\n');
+  const sts = ['AWS4-HMAC-SHA256', amzDate, scope, sha256hex(req)].join('\n');
+  return `${url.origin}${path}?${cq}&X-Amz-Signature=${signature(c.secretKey, dateStamp, sts)}`;
+}
+
 /** A header-signed request against the bucket. */
 async function call(method: string, key: string, query: Record<string, string>, body?: string, headers: Record<string, string> = {}): Promise<Response> {
   const c = need();
