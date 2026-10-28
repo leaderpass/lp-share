@@ -601,6 +601,12 @@
 .shv-tabs button.is-on{ color: var(--text); border-bottom-color: var(--accent); }
 .shv-side-body{ flex: 1; overflow-y: auto; padding: 12px 14px; }
 .shv-side-body .mad-comments-section{ padding: 0; border: 0; background: none; }
+/* Comments fill the sidebar's full height: the list grows and scrolls, the
+   composer sits at the bottom (the 320px cap is LPOS's asset-drawer size). */
+.shv-side-body:has(> .mad-comments-section){ display: flex; flex-direction: column; overflow: hidden; }
+.shv-side-body > .mad-comments-section{ flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.shv-side-body .mad-comments-list{ flex: 1; min-height: 0; max-height: none; }
+.shv-side-body .mad-comment-compose{ flex: none; margin-top: auto; }
 .shv-transcript{ display: flex; flex-direction: column; gap: 2px; }
 .shv-cue{
   display: grid; grid-template-columns: 48px minmax(0, 1fr); gap: 8px; text-align: left; border: 0; background: none;
@@ -625,6 +631,7 @@
   .shv-cat{ display: none; }
   .shv-row{ min-width: 240px; }
   .shv-side{ border-left: 0; border-top: 1px solid var(--line); max-height: none; }
+  .shv-side-body .mad-comments-list{ flex: none; max-height: 60dvh; }
 }
 @media (max-width: 640px){
   .shv-head{ grid-template-columns: auto minmax(0, 1fr) auto; padding: 10px 12px; }

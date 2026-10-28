@@ -19,6 +19,11 @@ import type { Viewer } from './viewer';
  *       visitor — anyone else; one per browser (share_guest cookie)
  *   - The same viewer repeating an event within 30 min is one row, so 'open'
  *     rows read as visits.
+ *   - first_visit marks the opens that ring LPOS's bell: the share's first
+ *     open ever, then the first open by each new person we can name (an email,
+ *     or a typed name not seen on this share). Unnamed visitors after the first
+ *     stay silent — a new browser or an in-app email browser is a new cookie,
+ *     so "first time per visitor" fired on nearly every open.
  */
 
 export type ActivityKind = 'open' | 'video_open' | 'download';
@@ -34,6 +39,18 @@ interface ActivityRow {
 
 function isBot(): boolean {
   try { return BOT_UA.test(headers().get('user-agent') ?? ''); } catch { return false; }
+}
+
+/** Should this open ring the bell? See first_visit in the header. */
+function isNotableOpen(shareId: string, who: { kind: ViewerKind; id: string }, name: string | null): boolean {
+  const conn = db();
+  const opened = (where: string, ...args: unknown[]) => !!conn.prepare(
+    `SELECT 1 FROM share_activity WHERE share_id = ? AND kind = 'open' ${where} LIMIT 1`,
+  ).get(shareId, ...args);
+  if (!opened('')) return true;
+  if (opened('AND viewer_id = ?', who.id)) return false;
+  if (who.kind === 'email') return true;
+  return !!name && !opened('AND lower(name) = lower(?)', name);
 }
 
 /** Record one event for a viewer (no-op for staff, bots and cookieless requests). */
@@ -54,14 +71,12 @@ export function recordActivity(share: Share, v: Viewer, e: { kind: ActivityKind;
       if (name) conn.prepare('UPDATE share_activity SET name = ? WHERE seq = ?').run(name, recent.seq);
       return;
     }
-    const seenBefore = e.kind === 'open' && !!conn.prepare(
-      `SELECT 1 FROM share_activity WHERE share_id = ? AND viewer_id = ? AND kind = 'open' LIMIT 1`,
-    ).get(share.id, who.id);
+    const notify = e.kind === 'open' && isNotableOpen(share.id, who, name);
     conn.prepare(
       `INSERT INTO share_activity (share_id, kind, asset_id, file_kind, viewer_kind, viewer_id, name, first_visit, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(share.id, e.kind, e.assetId ?? null, e.fileKind ?? null, who.kind, who.id, name,
-      e.kind === 'open' && !seenBefore ? 1 : 0, now.toISOString());
+      notify ? 1 : 0, now.toISOString());
   } catch (err) {
     // Analytics must never break viewing or downloading.
     console.warn('[activity] record failed:', (err as Error).message);
@@ -175,7 +190,7 @@ export function shareActivitySummary(share: Share): ShareActivitySummary {
 export interface FirstVisit { seq: number; share_id: string; viewer_kind: ViewerKind; viewer: string; at: string }
 
 /**
- * First-ever opens of a share by each viewer since `since`, for LPOS's bell.
+ * Bell-worthy opens (first_visit, see the header) since `since`, for LPOS's bell.
  * The cursor covers every row scanned, so LPOS never re-reads them.
  */
 export function firstVisitsSince(since: number, limit = 500): { visits: FirstVisit[]; cursor: number } {
