@@ -43,6 +43,8 @@ interface Props {
   /** Span being drafted — shared with the player's scrub bar. */
   span: CommentSpan | null;
   onSpanChange: (span: CommentSpan | null) => void;
+  /** The compose box took focus — pause the player. */
+  onComposeFocus: () => void;
   onSeek: (t: number) => void;
   onComments: (c: ViewComment[]) => void;
 }
@@ -61,7 +63,7 @@ const IconEdit = () => (<svg width="11" height="11" viewBox="0 0 24 24" fill="no
 const IconTrash = () => (<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" /><path d="M10 11v6" /><path d="M14 11v6" /><path d="M9 6V4h6v2" /></svg>);
 
 export function Comments({
-  token, assetId, staff, clientView, internalShare, getName, needsName, requestName, getCurrentTime, span, onSpanChange, onSeek, onComments,
+  token, assetId, staff, clientView, internalShare, getName, needsName, requestName, getCurrentTime, span, onSpanChange, onComposeFocus, onSeek, onComments,
 }: Readonly<Props>) {
   const [list, setList] = useState<ViewComment[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -203,12 +205,6 @@ export function Comments({
         )}
         <div className="mad-comment-meta">
           <span className="mad-comment-meta-spacer" aria-hidden="true" />
-          {top && c.timestamp !== null && (
-            <button type="button" className="mad-comment-time mad-comment-time--seek" title="Jump to this moment" onClick={() => onSeek(c.timestamp!)}>
-              {formatTimecode(c.timestamp)}{c.duration ? ` → ${formatTimecode(c.timestamp + c.duration)}` : ''}
-              <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" style={{ marginLeft: 3, opacity: 0.7 }}><polygon points="5 3 19 12 5 21 5 3" /></svg>
-            </button>
-          )}
           <span className="mad-comment-date">{formatCommentDate(c.createdAt)}</span>
         </div>
         {top && moderate && (
@@ -261,6 +257,13 @@ export function Comments({
           {all.map((c) => (
             <div key={c.id} className={`mad-comment${c.completed ? ' mad-comment--done' : ''}`}>
               {header(c, true)}
+              {/* Timecode / span on its own line so it never gets clipped. */}
+              {c.timestamp !== null && (
+                <button type="button" className="mad-comment-time mad-comment-time--seek mad-comment-when" title="Jump to this moment" onClick={() => onSeek(c.timestamp!)}>
+                  {formatTimecode(c.timestamp)}{c.duration ? ` → ${formatTimecode(c.timestamp + c.duration)}` : ''}
+                  <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" style={{ marginLeft: 3, opacity: 0.7 }}><polygon points="5 3 19 12 5 21 5 3" /></svg>
+                </button>
+              )}
               {body(c)}
               {(c.replies.length > 0 || replyingId === c.id) && (
                 <div className="mad-comment-replies">
@@ -310,6 +313,7 @@ export function Comments({
             placeholder={internalShare ? 'Add an internal comment…' : 'Add a comment…'}
             value={composeText}
             onFocus={() => {
+              onComposeFocus();
               // Keep a drafted point/range (I/O keys, drag); otherwise pin to the playhead.
               if (!span) {
                 const start = snapToFrame(getCurrentTime());

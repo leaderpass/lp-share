@@ -43,6 +43,7 @@ export function ShareViewer({ model, solo = false, initialAssetId }: Readonly<{ 
   const [sideTab, setSideTab] = useState<'comments' | 'transcript'>('comments');
   const [seekTarget, setSeekTarget] = useState<number | null>(null);
   const [composeSpan, setComposeSpan] = useState<CommentSpan | null>(null);
+  const [pauseSignal, setPauseSignal] = useState(0);
   const [markers, setMarkers] = useState<PlayerMarker[]>([]);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
@@ -206,6 +207,7 @@ export function ShareViewer({ model, solo = false, initialAssetId }: Readonly<{ 
       onCurrentTimeChange={(t) => { timeRef.current = t; }}
       pendingSpan={commentsOn ? composeSpan : null}
       onPendingSpanChange={setComposeSpan}
+      pauseSignal={pauseSignal}
     />
   ) : <div className="shv-empty">This video isn’t available to play yet.</div>;
 
@@ -349,6 +351,7 @@ export function ShareViewer({ model, solo = false, initialAssetId }: Readonly<{ 
                   getCurrentTime={() => timeRef.current}
                   span={composeSpan}
                   onSpanChange={setComposeSpan}
+                  onComposeFocus={() => setPauseSignal((n) => n + 1)}
                   onSeek={(t) => setSeekTarget(t)}
                   onComments={onComments}
                 />

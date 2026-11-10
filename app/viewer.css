@@ -114,6 +114,7 @@
   margin-top: 5px;
 }
 .mad-comment-text{ font-size: 0.82rem; color: var(--text); margin: 0; line-height: 1.4; }
+.mad-comment-when{ margin-bottom: 0.3rem; max-width: 100%; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .mad-comment-replies{
   margin-top: 0.5rem; padding-top: 0.5rem;
   border-top: 1px solid var(--surface-3);

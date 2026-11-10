@@ -31,6 +31,8 @@ interface Props {
   /** Span the compose box is drafting; drawn on the scrub bar with draggable edges. */
   pendingSpan?: CommentSpan | null;
   onPendingSpanChange?: (span: CommentSpan) => void;
+  /** Bump to pause playback (e.g. the compose box took focus). */
+  pauseSignal?: number;
 }
 
 const RATE_OPTIONS = [0.5, 1, 1.5, 2] as const; // speed menu
@@ -55,7 +57,7 @@ function cfThumb(hlsUrl: string, t: number): string {
   return `${base}/thumbnails/thumbnail.jpg?time=${Math.max(0, Math.round(t))}s&height=180`;
 }
 
-export function Player({ src, markers = [], seekTarget, onSeekHandled, onCurrentTimeChange, pendingSpan = null, onPendingSpanChange }: Readonly<Props>) {
+export function Player({ src, markers = [], seekTarget, onSeekHandled, onCurrentTimeChange, pendingSpan = null, onPendingSpanChange, pauseSignal }: Readonly<Props>) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const scrubRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -155,6 +157,11 @@ export function Player({ src, markers = [], seekTarget, onSeekHandled, onCurrent
     onSeekHandled?.();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seekTarget]);
+
+  useEffect(() => {
+    if (!pauseSignal) return;
+    videoRef.current?.pause();
+  }, [pauseSignal]);
 
   // ── Scrub bar ───────────────────────────────────────────────────────────────
   function scrubTimeFromX(clientX: number): number | null {
