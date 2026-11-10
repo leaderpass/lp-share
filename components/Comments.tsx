@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { formatCommentDate, formatTimecode } from '@/lib/format';
+import { type CommentSpan, snapToFrame, spanDuration } from '@/lib/comment-span';
 
 /**
  * A share's comments on one video — LPOS's AssetComments section ported for
@@ -39,6 +40,9 @@ interface Props {
   needsName: boolean;
   requestName: () => Promise<string | null>;
   getCurrentTime: () => number;
+  /** Span being drafted — shared with the player's scrub bar. */
+  span: CommentSpan | null;
+  onSpanChange: (span: CommentSpan | null) => void;
   onSeek: (t: number) => void;
   onComments: (c: ViewComment[]) => void;
 }
@@ -57,12 +61,12 @@ const IconEdit = () => (<svg width="11" height="11" viewBox="0 0 24 24" fill="no
 const IconTrash = () => (<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" /><path d="M10 11v6" /><path d="M14 11v6" /><path d="M9 6V4h6v2" /></svg>);
 
 export function Comments({
-  token, assetId, staff, clientView, internalShare, getName, needsName, requestName, getCurrentTime, onSeek, onComments,
+  token, assetId, staff, clientView, internalShare, getName, needsName, requestName, getCurrentTime, span, onSpanChange, onSeek, onComments,
 }: Readonly<Props>) {
   const [list, setList] = useState<ViewComment[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [composeText, setComposeText] = useState('');
-  const [composeTime, setComposeTime] = useState(0);
+  const [lastStart, setLastStart] = useState(0);
   const [posting, setPosting] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
@@ -84,7 +88,7 @@ export function Comments({
   }, [api, assetId, apply]);
 
   useEffect(() => {
-    setList(null); setError(null); setEditingId(null); setReplyingId(null); setComposeTime(0);
+    setList(null); setError(null); setEditingId(null); setReplyingId(null); setLastStart(0);
     void load();
     const t = setInterval(() => { if (document.visibilityState === 'visible') void load(); }, POLL_MS);
     return () => clearInterval(t);
@@ -126,7 +130,7 @@ export function Comments({
     const text = composeText.trim();
     if (!text) return;
     setPosting(true);
-    if (await send('POST', { text, timestamp: composeTime })) setComposeText('');
+    if (await send('POST', { text, timestamp: span?.start ?? lastStart, duration: span ? spanDuration(span) : null })) { setComposeText(''); onSpanChange(null); }
     setPosting(false);
   }
   async function saveEdit(id: string) {
@@ -259,17 +263,30 @@ export function Comments({
       )}
 
       <div className="mad-comment-compose">
-        <div className="mad-comment-compose-ts">@ {formatTimecode(composeTime)}</div>
+        <div className="mad-comment-compose-ts">
+          @ {formatTimecode(span?.start ?? lastStart)}
+          {span?.end != null && <> → {formatTimecode(span.end)}
+            <button type="button" className="mad-compose-span-clear" onMouseDown={(e) => e.preventDefault()}
+              onClick={() => onSpanChange({ start: span.start, end: null })} aria-label="Clear out-point">×</button></>}
+        </div>
         <div className="mad-comment-compose-row">
           <input
             className="mad-comment-compose-input"
             placeholder={internalShare ? 'Add an internal comment…' : 'Add a comment…'}
             value={composeText}
-            onFocus={() => setComposeTime(Math.round(getCurrentTime() * 24000 / 1001) / 24)}
+            onFocus={() => {
+              // Keep a drafted range; otherwise pin to the playhead.
+              if (!span || span.end === null) {
+                const start = snapToFrame(getCurrentTime());
+                onSpanChange({ start, end: null });
+                setLastStart(start);
+              }
+            }}
+            onBlur={() => { if (!composeText.trim() && span?.end == null) onSpanChange(null); }}
             onChange={(e) => setComposeText(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void post(); }
-              if (e.key === 'Escape') { setComposeText(''); setError(null); (e.target as HTMLInputElement).blur(); }
+              if (e.key === 'Escape') { setComposeText(''); setError(null); onSpanChange(null); (e.target as HTMLInputElement).blur(); }
             }}
           />
           <button type="button" className="mad-comment-compose-send" onClick={() => void post()} disabled={posting || !composeText.trim()} aria-label="Post comment">

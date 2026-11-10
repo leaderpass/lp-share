@@ -5,6 +5,7 @@ import { Player, type PlayerMarker } from './Player';
 import { Comments, type ViewComment } from './Comments';
 import { formatBytes, formatDuration } from '@/lib/format';
 import type { ViewItem, ViewModel } from '@/lib/view';
+import type { CommentSpan } from '@/lib/comment-span';
 
 /**
  * The share viewer — LPOS's ShareViewer ported for LP Share. Fixed layout:
@@ -41,6 +42,7 @@ export function ShareViewer({ model, solo = false, initialAssetId }: Readonly<{ 
   const [clientView, setClientView] = useState(false);
   const [sideTab, setSideTab] = useState<'comments' | 'transcript'>('comments');
   const [seekTarget, setSeekTarget] = useState<number | null>(null);
+  const [composeSpan, setComposeSpan] = useState<CommentSpan | null>(null);
   const [markers, setMarkers] = useState<PlayerMarker[]>([]);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
@@ -79,7 +81,7 @@ export function ShareViewer({ model, solo = false, initialAssetId }: Readonly<{ 
       : sideTab === 'transcript' && transcriptsOn ? 'transcript'
       : commentsOn ? 'comments' : transcriptsOn ? 'transcript' : null;
 
-  useEffect(() => { setMarkers([]); }, [item?.assetId]);
+  useEffect(() => { setMarkers([]); setComposeSpan(null); }, [item?.assetId]);
   const onComments = useCallback((list: ViewComment[]) => {
     setMarkers(list.filter((c) => !c.parentId).map((c) => ({
       id: c.id, timestamp: c.timestamp, duration: c.duration, completed: c.completed, authorName: c.authorName, text: c.text,
@@ -202,6 +204,8 @@ export function ShareViewer({ model, solo = false, initialAssetId }: Readonly<{ 
       seekTarget={seekTarget}
       onSeekHandled={() => setSeekTarget(null)}
       onCurrentTimeChange={(t) => { timeRef.current = t; }}
+      pendingSpan={commentsOn ? composeSpan : null}
+      onPendingSpanChange={setComposeSpan}
     />
   ) : <div className="shv-empty">This video isn’t available to play yet.</div>;
 
@@ -343,6 +347,8 @@ export function ShareViewer({ model, solo = false, initialAssetId }: Readonly<{ 
                   needsName={!staff}
                   requestName={requestName}
                   getCurrentTime={() => timeRef.current}
+                  span={composeSpan}
+                  onSpanChange={setComposeSpan}
                   onSeek={(t) => setSeekTarget(t)}
                   onComments={onComments}
                 />

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useHlsPlayer } from '@/hooks/useHlsPlayer';
 import { formatTimecode } from '@/lib/format';
+import { type CommentSpan, spanFromDrag } from '@/lib/comment-span';
 
 /**
  * The share player — LPOS's MediaPlayer (compact variant) ported for LP Share:
@@ -27,6 +28,9 @@ interface Props {
   seekTarget?: number | null;
   onSeekHandled?: () => void;
   onCurrentTimeChange?: (t: number) => void;
+  /** Span the compose box is drafting; drawn on the scrub bar with draggable edges. */
+  pendingSpan?: CommentSpan | null;
+  onPendingSpanChange?: (span: CommentSpan) => void;
 }
 
 const SPEED_LEVELS = [1, 1.25, 1.5, 2] as const;
@@ -51,7 +55,7 @@ function cfThumb(hlsUrl: string, t: number): string {
   return `${base}/thumbnails/thumbnail.jpg?time=${Math.max(0, Math.round(t))}s&height=180`;
 }
 
-export function Player({ src, markers = [], seekTarget, onSeekHandled, onCurrentTimeChange }: Readonly<Props>) {
+export function Player({ src, markers = [], seekTarget, onSeekHandled, onCurrentTimeChange, pendingSpan = null, onPendingSpanChange }: Readonly<Props>) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const scrubRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -220,6 +224,41 @@ export function Player({ src, markers = [], seekTarget, onSeekHandled, onCurrent
     if (!movedRef.current || wasPlayingRef.current) void v.play();
     movedRef.current = false;
   }
+  // ── Pending comment span ────────────────────────────────────────────────────
+  // Dragging an edge of the drafted span moves that edge; the other edge is the
+  // anchor. The video seeks to the dragged edge so the frame shows.
+  const spanAnchorRef = useRef<number | null>(null);
+  function handleSpanPointerDown(edge: 'start' | 'end', e: React.PointerEvent<HTMLButtonElement>) {
+    e.stopPropagation();
+    e.preventDefault();
+    const v = videoRef.current;
+    if (!v || !pendingSpan) return;
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+    spanAnchorRef.current = edge === 'end' ? pendingSpan.start : (pendingSpan.end ?? pendingSpan.start);
+    if (!v.paused) v.pause();
+  }
+  function handleSpanPointerMove(e: React.PointerEvent<HTMLButtonElement>) {
+    const anchor = spanAnchorRef.current;
+    if (anchor === null) return;
+    if (e.buttons === 0) { endSpanDrag(e); return; }
+    const t = scrubTimeFromX(e.clientX);
+    const v = videoRef.current;
+    if (t === null || !v) return;
+    const next = spanFromDrag(anchor, t);
+    onPendingSpanChange?.(next);
+    const shown = next.end === null ? next.start : (next.start === anchor ? next.end : next.start);
+    v.currentTime = shown;
+    setCurrentTime(shown);
+    setScrubPreview({ t: shown, x: scrubPreviewX(e.clientX) });
+    scheduleSettle();
+  }
+  function endSpanDrag(e: React.PointerEvent<HTMLButtonElement>) {
+    if (spanAnchorRef.current === null) return;
+    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+    spanAnchorRef.current = null;
+    endScrubPreview();
+  }
+
   function seekTo(ts: number) {
     const v = videoRef.current;
     if (!v) return;
@@ -379,7 +418,7 @@ export function Player({ src, markers = [], seekTarget, onSeekHandled, onCurrent
         </div>
       )}
 
-      <div className={`mp-controls-bar${ctrlsVisible ? ' mp-controls-bar--visible' : ''}`}>
+      <div className={`mp-controls-bar${ctrlsVisible || pendingSpan ? ' mp-controls-bar--visible' : ''}`}>
         <div
           ref={scrubRef}
           className="mp-scrub"
@@ -409,6 +448,31 @@ export function Player({ src, markers = [], seekTarget, onSeekHandled, onCurrent
                   aria-label={`Comment at ${formatTimecode(c.timestamp ?? 0)}`} />
               );
             })}
+            {duration > 0 && pendingSpan && (() => {
+              const span = pendingSpan;
+              const startPct = (span.start / duration) * 100;
+              const endPct = ((span.end ?? span.start) / duration) * 100;
+              const grip = (edge: 'start' | 'end', pct: number) => (
+                <button key={edge} type="button"
+                  className={`mp-pending-grip${span.end === null ? ' mp-pending-grip--pin' : ''}`}
+                  style={{ left: `${pct}%` }}
+                  title="Drag to set a range"
+                  aria-label={edge === 'start' ? 'Comment in-point' : 'Comment out-point'}
+                  onPointerDown={(e) => handleSpanPointerDown(edge, e)}
+                  onPointerMove={handleSpanPointerMove}
+                  onPointerUp={endSpanDrag}
+                  onPointerCancel={endSpanDrag}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={(e) => e.stopPropagation()} />
+              );
+              return (
+                <>
+                  {span.end !== null && <div className="mp-pending" style={{ left: `${startPct}%`, width: `${endPct - startPct}%` }} />}
+                  {span.end !== null && grip('start', startPct)}
+                  {grip('end', endPct)}
+                </>
+              );
+            })()}
           </div>
           {scrubPreview && (
             <div className="mp-scrub-thumb-wrap" style={{ left: scrubPreview.x }} aria-hidden>
