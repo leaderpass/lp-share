@@ -312,9 +312,11 @@ export function Comments({
       <div className="mad-comment-compose">
         <div className="mad-comment-compose-ts">
           @ {formatTimecode(span?.start ?? lastStart)}
-          {span?.end != null && <> → {formatTimecode(span.end)}
+          {span?.end != null && <> → {formatTimecode(span.end)}</>}
+          {span && (
             <button type="button" className="mad-compose-span-clear" onMouseDown={(e) => e.preventDefault()}
-              onClick={() => onSpanChange({ start: span.start, end: null })} aria-label="Clear out-point">×</button></>}
+              onClick={() => onSpanChange(null)} aria-label="Discard comment time">×</button>
+          )}
         </div>
         <div className="mad-comment-compose-row">
           <input
@@ -331,7 +333,7 @@ export function Comments({
                 setLastStart(start);
               }
             }}
-            onBlur={() => { if (!composeText.trim() && span?.end == null) onSpanChange(null); }}
+            onBlur={() => { if (!composeText.trim()) onSpanChange(null); }}
             onChange={(e) => setComposeText(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void post(); }
