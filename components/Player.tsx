@@ -34,6 +34,7 @@ interface Props {
 }
 
 const SPEED_LEVELS = [1, 1.25, 1.5, 2] as const;
+const RATE_OPTIONS = [0.5, 1, 1.5, 2] as const; // speed menu
 const SPEED_LOCK_PX = 25;
 const SPEED_HOLD_MS = 200;
 const THUMB_TARGET_S = 2.5;
@@ -85,6 +86,11 @@ export function Player({ src, markers = [], seekTarget, onSeekHandled, onCurrent
   const [speed, setSpeed] = useState(1);
   const [speedLocked, setSpeedLocked] = useState(false);
   const [speedHolding, setSpeedHolding] = useState(false);
+  // Speed picked from the menu; a hold/lock gesture overrides it and falls back to it.
+  const [rate, setRate] = useState(1);
+  const [rateMenuOpen, setRateMenuOpen] = useState(false);
+  const rateRef = useRef(1);
+  const rateMenuRef = useRef<HTMLDivElement>(null);
   const [rightHover, setRightHover] = useState(false);
   const [ctrlsVisible, setCtrlsVisible] = useState(true);
   const [unavailable, setUnavailable] = useState(false);
@@ -308,14 +314,30 @@ export function Player({ src, markers = [], seekTarget, onSeekHandled, onCurrent
     setSpeedHolding(false);
     if (!speedLockedRef.current) {
       setSpeed(1); setSpeedLocked(false);
-      if (videoRef.current) videoRef.current.playbackRate = 1;
+      if (videoRef.current) videoRef.current.playbackRate = rateRef.current;
     }
   }
   function clearLockedSpeed() {
     setSpeed(1); setSpeedLocked(false); setSpeedHolding(false);
     speedLockedRef.current = false;
-    if (videoRef.current) videoRef.current.playbackRate = 1;
+    if (videoRef.current) videoRef.current.playbackRate = rateRef.current;
   }
+
+  // ── Speed menu ──────────────────────────────────────────────────────────────
+  function chooseRate(r: number) {
+    if (speedLockedRef.current) clearLockedSpeed();
+    rateRef.current = r;
+    setRate(r);
+    setRateMenuOpen(false);
+    const v = videoRef.current;
+    if (v) { v.defaultPlaybackRate = r; v.playbackRate = r; }
+  }
+  useEffect(() => {
+    if (!rateMenuOpen) return;
+    const onDown = (e: PointerEvent) => { if (!rateMenuRef.current?.contains(e.target as Node)) setRateMenuOpen(false); };
+    document.addEventListener('pointerdown', onDown);
+    return () => document.removeEventListener('pointerdown', onDown);
+  }, [rateMenuOpen]);
 
   function handleVolumeChange(val: number) {
     const v = videoRef.current;
@@ -375,6 +397,7 @@ export function Player({ src, markers = [], seekTarget, onSeekHandled, onCurrent
             setDuration(v?.duration ?? 0);
             const w = v?.videoWidth ?? 0, h = v?.videoHeight ?? 0;
             if (w > 0 && h > 0) setVideoAspect(w / h);
+            if (v) { v.defaultPlaybackRate = rateRef.current; v.playbackRate = rateRef.current; }
           }}
           onResize={() => {
             const v = videoRef.current;
@@ -418,7 +441,7 @@ export function Player({ src, markers = [], seekTarget, onSeekHandled, onCurrent
         </div>
       )}
 
-      <div className={`mp-controls-bar${ctrlsVisible || pendingSpan ? ' mp-controls-bar--visible' : ''}`}>
+      <div className={`mp-controls-bar${ctrlsVisible || pendingSpan || rateMenuOpen ? ' mp-controls-bar--visible' : ''}`}>
         <div
           ref={scrubRef}
           className="mp-scrub"
@@ -512,6 +535,24 @@ export function Player({ src, markers = [], seekTarget, onSeekHandled, onCurrent
                 ? <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" /><line x1="23" y1="9" x2="17" y2="15" /><line x1="17" y1="9" x2="23" y2="15" /></svg>
                 : <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" /><path d="M19.07 4.93a10 10 0 010 14.14M15.54 8.46a5 5 0 010 7.07" /></svg>}
             </button>
+          </div>
+          <div className="mp-rate-wrap" ref={rateMenuRef}>
+            <button type="button" className={`mp-btn mp-rate-btn${rate !== 1 ? ' mp-rate-btn--on' : ''}`}
+              onClick={(e) => { e.stopPropagation(); setRateMenuOpen((o) => !o); }}
+              aria-label={`Playback speed ${rate}×`} aria-haspopup="menu" aria-expanded={rateMenuOpen} title="Playback speed">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 14l4-4" /><path d="M3.34 19a10 10 0 1117.32 0" /></svg>
+              {rate !== 1 && <span className="mp-rate-label">{rate}×</span>}
+            </button>
+            {rateMenuOpen && (
+              <div className="mp-rate-menu" role="menu" onClick={(e) => e.stopPropagation()}>
+                {RATE_OPTIONS.map((r) => (
+                  <button key={r} type="button" role="menuitemradio" aria-checked={rate === r}
+                    className={`mp-rate-opt${rate === r ? ' mp-rate-opt--on' : ''}`} onClick={() => chooseRate(r)}>
+                    {r}×
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
           {quality.hasLevels && (
             <button type="button" className={`mp-btn mp-quality${quality.mode === 'max' ? ' mp-quality--on' : ''}`}
