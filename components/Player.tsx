@@ -33,7 +33,6 @@ interface Props {
   onPendingSpanChange?: (span: CommentSpan) => void;
 }
 
-const SPEED_LEVELS = [1, 1.25, 1.5, 2] as const;
 const RATE_OPTIONS = [0.5, 1, 1.5, 2] as const; // speed menu
 const SPEED_LOCK_PX = 25;
 const SPEED_HOLD_MS = 200;
@@ -64,6 +63,7 @@ export function Player({ src, markers = [], seekTarget, onSeekHandled, onCurrent
   const speedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const holdTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const speedLevelRef = useRef(0);
+  const holdLevelsRef = useRef<number[]>([]);
   const speedStartYRef = useRef(0);
   const speedLockedRef = useRef(false);
   const draggingRef = useRef(false);
@@ -83,7 +83,7 @@ export function Player({ src, markers = [], seekTarget, onSeekHandled, onCurrent
   const [muted, setMuted] = useState(false);
   const [volume, setVolume] = useState(1);
   const [volHover, setVolHover] = useState(false);
-  const [speed, setSpeed] = useState(1);
+  const [holdRate, setHoldRate] = useState<number | null>(null); // live speed during a hold
   const [speedLocked, setSpeedLocked] = useState(false);
   const [speedHolding, setSpeedHolding] = useState(false);
   // Speed picked from the menu; a hold/lock gesture overrides it and falls back to it.
@@ -273,19 +273,30 @@ export function Player({ src, markers = [], seekTarget, onSeekHandled, onCurrent
   }
 
   // ── Speed hold (press and hold the right half) ──────────────────────────────
+  // One speed: `rate` is what the menu shows and playback rests at. A hold
+  // steps up through the menu speeds above it (never slower) and falls back to
+  // it on release; locking a hold (drag down) makes that speed the new `rate`.
+  function setRateTo(r: number) {
+    rateRef.current = r;
+    setRate(r);
+    const v = videoRef.current;
+    if (v) { v.defaultPlaybackRate = r; v.playbackRate = r; }
+  }
   function beginSpeedHold() {
     holdTimerRef.current = null;
     speedLockedRef.current = false;
-    speedLevelRef.current = 1;
     speedGestureRef.current = true;
-    const first = SPEED_LEVELS[1];
-    setSpeed(first); setSpeedHolding(true);
+    const up = RATE_OPTIONS.filter((r) => r > rateRef.current);
+    holdLevelsRef.current = up.length ? up : [rateRef.current];
+    speedLevelRef.current = 0;
+    const first = holdLevelsRef.current[0];
+    setHoldRate(first); setSpeedHolding(true); setRateMenuOpen(false);
     if (videoRef.current) videoRef.current.playbackRate = first;
     if (speedTimerRef.current) clearInterval(speedTimerRef.current);
     speedTimerRef.current = setInterval(() => {
-      speedLevelRef.current = Math.min(speedLevelRef.current + 1, SPEED_LEVELS.length - 1);
-      const s = SPEED_LEVELS[speedLevelRef.current];
-      setSpeed(s);
+      speedLevelRef.current = Math.min(speedLevelRef.current + 1, holdLevelsRef.current.length - 1);
+      const s = holdLevelsRef.current[speedLevelRef.current];
+      setHoldRate(s);
       if (videoRef.current) videoRef.current.playbackRate = s;
     }, 1500);
   }
@@ -299,11 +310,14 @@ export function Player({ src, markers = [], seekTarget, onSeekHandled, onCurrent
     holdTimerRef.current = setTimeout(beginSpeedHold, SPEED_HOLD_MS);
   }
   function handleContainerPointerMove(e: React.PointerEvent<HTMLDivElement>) {
-    if (!speedTimerRef.current && !speedLockedRef.current) return;
-    if (!speedLockedRef.current && e.clientY - speedStartYRef.current > SPEED_LOCK_PX) {
+    if (!speedTimerRef.current) return;
+    if (e.clientY - speedStartYRef.current > SPEED_LOCK_PX) {
+      // Lock = pick this speed: it becomes the menu's rate.
+      clearInterval(speedTimerRef.current);
+      speedTimerRef.current = null;
       speedLockedRef.current = true;
-      setSpeedLocked(true);
-      if (speedTimerRef.current) { clearInterval(speedTimerRef.current); speedTimerRef.current = null; }
+      setRateTo(holdLevelsRef.current[speedLevelRef.current]);
+      setHoldRate(null); setSpeedHolding(false); setSpeedLocked(true);
     }
   }
   function handleContainerPointerUp() {
@@ -311,26 +325,21 @@ export function Player({ src, markers = [], seekTarget, onSeekHandled, onCurrent
     if (!speedTimerRef.current) return;
     clearInterval(speedTimerRef.current);
     speedTimerRef.current = null;
-    setSpeedHolding(false);
-    if (!speedLockedRef.current) {
-      setSpeed(1); setSpeedLocked(false);
-      if (videoRef.current) videoRef.current.playbackRate = rateRef.current;
-    }
+    setSpeedHolding(false); setHoldRate(null);
+    if (videoRef.current) videoRef.current.playbackRate = rateRef.current;
   }
   function clearLockedSpeed() {
-    setSpeed(1); setSpeedLocked(false); setSpeedHolding(false);
     speedLockedRef.current = false;
-    if (videoRef.current) videoRef.current.playbackRate = rateRef.current;
+    setSpeedLocked(false);
+    setRateTo(1);
   }
 
   // ── Speed menu ──────────────────────────────────────────────────────────────
   function chooseRate(r: number) {
-    if (speedLockedRef.current) clearLockedSpeed();
-    rateRef.current = r;
-    setRate(r);
+    speedLockedRef.current = false;
+    setSpeedLocked(false);
+    setRateTo(r);
     setRateMenuOpen(false);
-    const v = videoRef.current;
-    if (v) { v.defaultPlaybackRate = r; v.playbackRate = r; }
   }
   useEffect(() => {
     if (!rateMenuOpen) return;
@@ -419,9 +428,9 @@ export function Player({ src, markers = [], seekTarget, onSeekHandled, onCurrent
         )}
       </div>
 
-      {speedLocked && speed > 1 && (
+      {speedLocked && rate !== 1 && (
         <button type="button" className="mp-speed-badge" onClick={(e) => { e.stopPropagation(); clearLockedSpeed(); }}>
-          {speed}× — tap to clear
+          {rate}× — tap to clear
         </button>
       )}
 
@@ -429,7 +438,7 @@ export function Player({ src, markers = [], seekTarget, onSeekHandled, onCurrent
         <div className={`mp-speed-zone${speedHolding ? ' mp-speed-zone--holding' : ''}`} aria-hidden>
           {speedHolding ? (
             <>
-              <span className="mp-speed-zone-rate">{speed}×</span>
+              <span className="mp-speed-zone-rate">{holdRate ?? rate}×</span>
               <div className="mp-lock-hint">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0110 0v4" /></svg>
                 <span>↓ drag to lock</span>
@@ -537,11 +546,11 @@ export function Player({ src, markers = [], seekTarget, onSeekHandled, onCurrent
             </button>
           </div>
           <div className="mp-rate-wrap" ref={rateMenuRef}>
-            <button type="button" className={`mp-btn mp-rate-btn${rate !== 1 ? ' mp-rate-btn--on' : ''}`}
+            <button type="button" className={`mp-btn mp-rate-btn${(holdRate ?? rate) !== 1 ? ' mp-rate-btn--on' : ''}`}
               onClick={(e) => { e.stopPropagation(); setRateMenuOpen((o) => !o); }}
-              aria-label={`Playback speed ${rate}×`} aria-haspopup="menu" aria-expanded={rateMenuOpen} title="Playback speed">
+              aria-label={`Playback speed ${holdRate ?? rate}×`} aria-haspopup="menu" aria-expanded={rateMenuOpen} title="Playback speed">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 14l4-4" /><path d="M3.34 19a10 10 0 1117.32 0" /></svg>
-              {rate !== 1 && <span className="mp-rate-label">{rate}×</span>}
+              {(holdRate ?? rate) !== 1 && <span className="mp-rate-label">{holdRate ?? rate}×</span>}
             </button>
             {rateMenuOpen && (
               <div className="mp-rate-menu" role="menu" onClick={(e) => e.stopPropagation()}>
