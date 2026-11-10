@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useHlsPlayer } from '@/hooks/useHlsPlayer';
 import { formatTimecode } from '@/lib/format';
-import { type CommentSpan, spanFromDrag } from '@/lib/comment-span';
+import { type CommentSpan, snapToFrame, spanFromDrag } from '@/lib/comment-span';
 
 /**
  * The share player — LPOS's MediaPlayer (compact variant) ported for LP Share:
@@ -234,6 +234,38 @@ export function Player({ src, markers = [], seekTarget, onSeekHandled, onCurrent
   // Dragging an edge of the drafted span moves that edge; the other edge is the
   // anchor. The video seeks to the dragged edge so the frame shows.
   const spanAnchorRef = useRef<number | null>(null);
+  // Dragging the middle of a range slides it: pointer offset into the span + its length.
+  const spanMoveRef = useRef<{ offset: number; length: number } | null>(null);
+  function handleSpanMoveDown(e: React.PointerEvent<HTMLDivElement>) {
+    e.stopPropagation();
+    e.preventDefault();
+    const v = videoRef.current;
+    const t = scrubTimeFromX(e.clientX);
+    if (!v || t === null || !pendingSpan || pendingSpan.end === null) return;
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+    spanMoveRef.current = { offset: t - pendingSpan.start, length: pendingSpan.end - pendingSpan.start };
+    if (!v.paused) v.pause();
+  }
+  function handleSpanMoveMove(e: React.PointerEvent<HTMLDivElement>) {
+    const m = spanMoveRef.current;
+    if (!m) return;
+    if (e.buttons === 0) { handleSpanMoveUp(e); return; }
+    const t = scrubTimeFromX(e.clientX);
+    const v = videoRef.current;
+    if (t === null || !v) return;
+    const start = Math.max(0, Math.min(duration - m.length, snapToFrame(t - m.offset)));
+    onPendingSpanChange?.({ start, end: start + m.length });
+    v.currentTime = start;
+    setCurrentTime(start);
+    setScrubPreview({ t: start, x: scrubPreviewX(e.clientX) });
+    scheduleSettle();
+  }
+  function handleSpanMoveUp(e: React.PointerEvent<HTMLDivElement>) {
+    if (!spanMoveRef.current) return;
+    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+    spanMoveRef.current = null;
+    endScrubPreview();
+  }
   function handleSpanPointerDown(edge: 'start' | 'end', e: React.PointerEvent<HTMLButtonElement>) {
     e.stopPropagation();
     e.preventDefault();
@@ -499,7 +531,16 @@ export function Player({ src, markers = [], seekTarget, onSeekHandled, onCurrent
               );
               return (
                 <>
-                  {span.end !== null && <div className="mp-pending" style={{ left: `${startPct}%`, width: `${endPct - startPct}%` }} />}
+                  {span.end !== null && (
+                    <div className="mp-pending" style={{ left: `${startPct}%`, width: `${endPct - startPct}%` }}
+                      title="Drag to move"
+                      onPointerDown={handleSpanMoveDown}
+                      onPointerMove={handleSpanMoveMove}
+                      onPointerUp={handleSpanMoveUp}
+                      onPointerCancel={handleSpanMoveUp}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={(e) => e.stopPropagation()} />
+                  )}
                   {span.end !== null && grip('start', startPct)}
                   {grip('end', endPct)}
                 </>

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { formatCommentDate, formatTimecode } from '@/lib/format';
-import { type CommentSpan, snapToFrame, spanDuration } from '@/lib/comment-span';
+import { type CommentSpan, snapToFrame, spanDuration, spanFromDrag } from '@/lib/comment-span';
 
 /**
  * A share's comments on one video — LPOS's AssetComments section ported for
@@ -67,6 +67,40 @@ export function Comments({
   const [error, setError] = useState<string | null>(null);
   const [composeText, setComposeText] = useState('');
   const [lastStart, setLastStart] = useState(0);
+  const composeInputRef = useRef<HTMLInputElement>(null);
+
+  // I / O keys set the comment's in- and out-point at the playhead (as in
+  // Frame.io); O also focuses the compose box. Ignored while typing anywhere.
+  const spanRef = useRef(span);
+  spanRef.current = span;
+  const timeRef = useRef(getCurrentTime);
+  timeRef.current = getCurrentTime;
+  const setSpanRef = useRef(onSpanChange);
+  setSpanRef.current = onSpanChange;
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.metaKey || e.ctrlKey || e.altKey || e.defaultPrevented) return;
+      const el = document.activeElement as HTMLElement | null;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)) return;
+      const key = e.key.toLowerCase();
+      const cur = spanRef.current;
+      if (key === 'i') {
+        e.preventDefault();
+        const t = snapToFrame(timeRef.current());
+        setSpanRef.current({ start: t, end: cur?.end != null && cur.end > t ? cur.end : null });
+        setLastStart(t);
+      } else if (key === 'o') {
+        e.preventDefault();
+        const t = snapToFrame(timeRef.current());
+        setSpanRef.current(cur ? spanFromDrag(cur.start, t) : { start: t, end: null });
+        composeInputRef.current?.focus();
+      } else if (key === 'escape' && cur) {
+        setSpanRef.current(null);
+      }
+    }
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
   const [posting, setPosting] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
@@ -271,12 +305,13 @@ export function Comments({
         </div>
         <div className="mad-comment-compose-row">
           <input
+            ref={composeInputRef}
             className="mad-comment-compose-input"
             placeholder={internalShare ? 'Add an internal comment…' : 'Add a comment…'}
             value={composeText}
             onFocus={() => {
-              // Keep a drafted range; otherwise pin to the playhead.
-              if (!span || span.end === null) {
+              // Keep a drafted point/range (I/O keys, drag); otherwise pin to the playhead.
+              if (!span) {
                 const start = snapToFrame(getCurrentTime());
                 onSpanChange({ start, end: null });
                 setLastStart(start);

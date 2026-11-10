@@ -765,8 +765,12 @@ span.shv-thumb { background: linear-gradient(135deg, rgba(219, 175, 95, 0.16), r
   top: -2px; height: calc(100% + 4px);
   background: rgba(201,168,76,0.55);
   border-radius: 1px;
-  pointer-events: none;
+  cursor: grab;
+  touch-action: none;
+  z-index: 2;
 }
+.mp-pending:active{ cursor: grabbing; }
+.mp-pending::before{ content: ''; position: absolute; inset: -6px 0; }
 .mp-pending-grip{
   position: absolute;
   top: 50%;
