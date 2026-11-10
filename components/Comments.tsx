@@ -1,8 +1,8 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { type MutableRefObject, useCallback, useEffect, useRef, useState } from 'react';
 import { formatCommentDate, formatTimecode } from '@/lib/format';
-import { type CommentSpan, snapToFrame, spanDuration, spanFromDrag } from '@/lib/comment-span';
+import { type CommentSpan, snapToFrame, spanDuration, dragSpanEdge } from '@/lib/comment-span';
 
 /**
  * A share's comments on one video — LPOS's AssetComments section ported for
@@ -45,6 +45,8 @@ interface Props {
   onSpanChange: (span: CommentSpan | null) => void;
   /** The compose box took focus — pause the player. */
   onComposeFocus: () => void;
+  /** Filled in here so the player can save a dragged comment time through this thread. */
+  timeEditRef: MutableRefObject<((id: string, timestamp: number, duration: number | null) => Promise<boolean>) | null>;
   onSeek: (t: number) => void;
   onComments: (c: ViewComment[]) => void;
 }
@@ -63,7 +65,7 @@ const IconEdit = () => (<svg width="11" height="11" viewBox="0 0 24 24" fill="no
 const IconTrash = () => (<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" /><path d="M10 11v6" /><path d="M14 11v6" /><path d="M9 6V4h6v2" /></svg>);
 
 export function Comments({
-  token, assetId, staff, clientView, internalShare, getName, needsName, requestName, getCurrentTime, span, onSpanChange, onComposeFocus, onSeek, onComments,
+  token, assetId, staff, clientView, internalShare, getName, needsName, requestName, getCurrentTime, span, onSpanChange, onComposeFocus, timeEditRef, onSeek, onComments,
 }: Readonly<Props>) {
   const [list, setList] = useState<ViewComment[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -94,7 +96,7 @@ export function Comments({
       } else if (key === 'o') {
         e.preventDefault();
         const t = snapToFrame(timeRef.current());
-        setSpanRef.current(cur ? spanFromDrag(cur.start, t) : { start: t, end: null });
+        setSpanRef.current(cur ? dragSpanEdge(cur, 'end', t, 0) : { start: t, end: null });
         composeInputRef.current?.focus();
       } else if (key === 'escape' && cur) {
         setSpanRef.current(null);
@@ -161,6 +163,14 @@ export function Comments({
       return false;
     }
   }
+
+  // The player saves dragged comment times through this thread's send().
+  const sendRef = useRef(send);
+  sendRef.current = send;
+  useEffect(() => {
+    timeEditRef.current = (id, timestamp, duration) => sendRef.current('PATCH', { id, timestamp, duration });
+    return () => { timeEditRef.current = null; };
+  }, [timeEditRef]);
 
   async function post() {
     const text = composeText.trim();

@@ -441,20 +441,6 @@
   transition: opacity 0.15s;
 }
 .mp-scrub:hover .mp-scrub-head{ opacity: 1; }
-.mp-tick{
-  position: absolute;
-  top: -4px;
-  width: 2px;
-  height: calc(100% + 8px);
-  background: #4a9eff;
-  border: none;
-  border-radius: 1px;
-  padding: 0;
-  cursor: pointer;
-  transform: translateX(-50%);
-}
-.mp-tick--done{ background: rgba(255,255,255,0.2); }
-.mp-tick:hover{ background: #7ab8ff; }
 .mp-range{
   position: absolute;
   top: 0; height: 100%;
@@ -772,22 +758,26 @@ span.shv-thumb { background: linear-gradient(135deg, rgba(219, 175, 95, 0.16), r
 }
 .mp-pending:active{ cursor: grabbing; }
 .mp-pending::before{ content: ''; position: absolute; inset: -6px 0; }
-.mp-pending-grip{
+/* Comment markers: a dot per comment (dots at both ends of your own range) */
+.mp-dot{
   position: absolute;
   top: 50%;
-  width: 6px; height: 16px;
+  width: 9px; height: 9px;
   padding: 0;
-  border: 1px solid rgba(0,0,0,0.5);
-  border-radius: 2px;
-  background: #c9a84c;
+  border: 1.5px solid rgba(0,0,0,0.55);
+  border-radius: 50%;
+  background: #4a9eff;
   transform: translate(-50%, -50%);
-  cursor: ew-resize;
+  cursor: pointer;
   touch-action: none;
   z-index: 3;
 }
-.mp-pending-grip::before{ content: ''; position: absolute; inset: -6px -8px; }
-.mp-pending-grip--pin{ width: 4px; }
-.mp-pending-grip:hover{ background: #e0c06a; }
+.mp-dot::before{ content: ''; position: absolute; inset: -6px; border-radius: 50%; }
+.mp-dot:hover{ background: #7ab8ff; transform: translate(-50%, -50%) scale(1.25); }
+.mp-dot--edit{ cursor: ew-resize; }
+.mp-dot.mp-marker--done{ background: rgba(255,255,255,0.35); }
+.mp-dot--pending{ width: 11px; height: 11px; background: #c9a84c; cursor: ew-resize; z-index: 4; }
+.mp-dot--pending:hover{ background: #e0c06a; }
 .mad-compose-span-clear{
   margin-left: 6px;
   padding: 0 4px;

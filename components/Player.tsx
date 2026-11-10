@@ -1,9 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { useHlsPlayer } from '@/hooks/useHlsPlayer';
 import { formatTimecode } from '@/lib/format';
-import { type CommentSpan, snapToFrame, spanFromDrag } from '@/lib/comment-span';
+import { type CommentSpan, type SpanEdge, snapToFrame, dragSpanEdge, spanDuration, spanOf } from '@/lib/comment-span';
 
 /**
  * The share player — LPOS's MediaPlayer (compact variant) ported for LP Share:
@@ -19,6 +19,8 @@ export interface PlayerMarker {
   completed: boolean;
   authorName: string;
   text: string;
+  /** The viewer wrote it: its dots drag to move it / set a span. */
+  canEdit?: boolean;
 }
 
 interface Props {
@@ -33,6 +35,8 @@ interface Props {
   onPendingSpanChange?: (span: CommentSpan) => void;
   /** Bump to pause playback (e.g. the compose box took focus). */
   pauseSignal?: number;
+  /** Save a comment's new time/span (dragged on the scrub bar); resolves false on failure. */
+  onCommentTimeChange?: (id: string, timestamp: number, duration: number | null) => Promise<boolean>;
 }
 
 const RATE_OPTIONS = [0.5, 1, 1.5, 2] as const; // speed menu
@@ -57,7 +61,7 @@ function cfThumb(hlsUrl: string, t: number): string {
   return `${base}/thumbnails/thumbnail.jpg?time=${Math.max(0, Math.round(t))}s&height=180`;
 }
 
-export function Player({ src, markers = [], seekTarget, onSeekHandled, onCurrentTimeChange, pendingSpan = null, onPendingSpanChange, pauseSignal }: Readonly<Props>) {
+export function Player({ src, markers = [], seekTarget, onSeekHandled, onCurrentTimeChange, pendingSpan = null, onPendingSpanChange, pauseSignal, onCommentTimeChange }: Readonly<Props>) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const scrubRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -195,8 +199,7 @@ export function Player({ src, markers = [], seekTarget, onSeekHandled, onCurrent
   function handleScrubPointerDown(e: React.PointerEvent<HTMLDivElement>) {
     const v = videoRef.current;
     if (!v || !duration) return;
-    const cls = (e.target as HTMLElement).classList;
-    if (cls.contains('mp-tick') || cls.contains('mp-range')) return;
+    if ((e.target as HTMLElement).closest('.mp-dot, .mp-range, .mp-pending')) return;
     e.stopPropagation();
     const t = scrubTimeFromX(e.clientX);
     if (t === null) return;
@@ -237,71 +240,70 @@ export function Player({ src, markers = [], seekTarget, onSeekHandled, onCurrent
     if (!movedRef.current || wasPlayingRef.current) void v.play();
     movedRef.current = false;
   }
-  // ── Pending comment span ────────────────────────────────────────────────────
-  // Dragging an edge of the drafted span moves that edge; the other edge is the
-  // anchor. The video seeks to the dragged edge so the frame shows.
-  const spanAnchorRef = useRef<number | null>(null);
-  // Dragging the middle of a range slides it: pointer offset into the span + its length.
-  const spanMoveRef = useRef<{ offset: number; length: number } | null>(null);
-  function handleSpanMoveDown(e: React.PointerEvent<HTMLDivElement>) {
+  // ── Comment markers + drafted span: dragging ────────────────────────────────
+  // One gesture for the drafted span (its dots, and its middle to slide it) and
+  // for the viewer's own posted comments (their dots). Edges never cross; a
+  // single moment's dot pulls out an out-point. A press that doesn't move is a
+  // click (posted comment: jump there). The video seeks to the dragged edge.
+  interface SpanDrag {
+    target: string | null; // comment id, or null = the drafted span
+    mode: SpanEdge | 'move';
+    base: CommentSpan;
+    x0: number;
+    t0: number;
+    moved: boolean;
+    last: CommentSpan;
+  }
+  const spanDragRef = useRef<SpanDrag | null>(null);
+  const [markerDraft, setMarkerDraft] = useState<{ id: string; span: CommentSpan } | null>(null);
+  useEffect(() => { setMarkerDraft(null); }, [markers]);
+
+  function beginSpanDrag(e: React.PointerEvent<HTMLElement>, target: string | null, mode: SpanEdge | 'move', base: CommentSpan) {
     e.stopPropagation();
     e.preventDefault();
-    const v = videoRef.current;
     const t = scrubTimeFromX(e.clientX);
-    if (!v || t === null || !pendingSpan || pendingSpan.end === null) return;
+    if (t === null) return;
     try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* ignore */ }
-    spanMoveRef.current = { offset: t - pendingSpan.start, length: pendingSpan.end - pendingSpan.start };
-    if (!v.paused) v.pause();
+    spanDragRef.current = { target, mode, base, x0: e.clientX, t0: t, moved: false, last: base };
   }
-  function handleSpanMoveMove(e: React.PointerEvent<HTMLDivElement>) {
-    const m = spanMoveRef.current;
-    if (!m) return;
-    if (e.buttons === 0) { handleSpanMoveUp(e); return; }
-    const t = scrubTimeFromX(e.clientX);
-    const v = videoRef.current;
-    if (t === null || !v) return;
-    const start = Math.max(0, Math.min(duration - m.length, snapToFrame(t - m.offset)));
-    onPendingSpanChange?.({ start, end: start + m.length });
-    v.currentTime = start;
-    setCurrentTime(start);
-    setScrubPreview({ t: start, x: scrubPreviewX(e.clientX) });
-    scheduleSettle();
-  }
-  function handleSpanMoveUp(e: React.PointerEvent<HTMLDivElement>) {
-    if (!spanMoveRef.current) return;
-    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
-    spanMoveRef.current = null;
-    endScrubPreview();
-  }
-  function handleSpanPointerDown(edge: 'start' | 'end', e: React.PointerEvent<HTMLButtonElement>) {
-    e.stopPropagation();
-    e.preventDefault();
-    const v = videoRef.current;
-    if (!v || !pendingSpan) return;
-    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* ignore */ }
-    spanAnchorRef.current = edge === 'end' ? pendingSpan.start : (pendingSpan.end ?? pendingSpan.start);
-    if (!v.paused) v.pause();
-  }
-  function handleSpanPointerMove(e: React.PointerEvent<HTMLButtonElement>) {
-    const anchor = spanAnchorRef.current;
-    if (anchor === null) return;
+  function moveSpanDrag(e: React.PointerEvent<HTMLElement>) {
+    const d = spanDragRef.current;
+    if (!d) return;
     if (e.buttons === 0) { endSpanDrag(e); return; }
+    if (!d.moved && Math.abs(e.clientX - d.x0) < 3) return;
     const t = scrubTimeFromX(e.clientX);
     const v = videoRef.current;
     if (t === null || !v) return;
-    const next = spanFromDrag(anchor, t);
-    onPendingSpanChange?.(next);
-    const shown = next.end === null ? next.start : (next.start === anchor ? next.end : next.start);
+    if (!d.moved) { d.moved = true; if (!v.paused) v.pause(); }
+    let next: CommentSpan;
+    let shown: number;
+    if (d.mode === 'move') {
+      const len = (d.base.end ?? d.base.start) - d.base.start;
+      const start = Math.max(0, Math.min(duration - len, snapToFrame(d.base.start + t - d.t0)));
+      next = { start, end: d.base.end === null ? null : start + len };
+      shown = start;
+    } else {
+      next = dragSpanEdge(d.base, d.mode, t, duration);
+      shown = d.mode === 'start' || next.end === null ? next.start : next.end;
+    }
+    d.last = next;
+    if (d.target === null) onPendingSpanChange?.(next);
+    else setMarkerDraft({ id: d.target, span: next });
     v.currentTime = shown;
     setCurrentTime(shown);
     setScrubPreview({ t: shown, x: scrubPreviewX(e.clientX) });
     scheduleSettle();
   }
-  function endSpanDrag(e: React.PointerEvent<HTMLButtonElement>) {
-    if (spanAnchorRef.current === null) return;
+  function endSpanDrag(e: React.PointerEvent<HTMLElement>) {
+    const d = spanDragRef.current;
+    if (!d) return;
     try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
-    spanAnchorRef.current = null;
+    spanDragRef.current = null;
     endScrubPreview();
+    if (d.target === null) return;
+    if (!d.moved) { setMarkerDraft(null); seekTo(d.base.start); return; }
+    if ((d.last.start === d.base.start && d.last.end === d.base.end) || !onCommentTimeChange) { setMarkerDraft(null); return; }
+    void onCommentTimeChange(d.target, d.last.start, spanDuration(d.last)).then((ok) => { if (!ok) setMarkerDraft(null); });
   }
 
   function seekTo(ts: number) {
@@ -505,32 +507,47 @@ export function Player({ src, markers = [], seekTarget, onSeekHandled, onCurrent
             <div className="mp-scrub-fill" style={{ width: duration ? `${(currentTime / duration) * 100}%` : '0%' }} />
             <div className="mp-scrub-head" style={{ left: duration ? `${(currentTime / duration) * 100}%` : '0%' }} />
             {duration > 0 && timed.map((c) => {
-              const pct = ((c.timestamp ?? 0) / duration) * 100;
-              const tip = `${formatTimecode(c.timestamp ?? 0)}${c.duration ? ` → ${formatTimecode((c.timestamp ?? 0) + c.duration)}` : ''} — ${c.authorName}: ${c.text}`;
-              return c.duration && c.duration > 0 ? (
-                <button key={c.id} type="button" className={`mp-range${c.completed ? ' mp-range--done' : ''}`}
-                  style={{ left: `${pct}%`, width: `${(c.duration / duration) * 100}%` }} title={tip}
-                  onClick={(e) => { e.stopPropagation(); seekTo(c.timestamp ?? 0); }}
-                  aria-label={`Comment range at ${formatTimecode(c.timestamp ?? 0)}`} />
+              const sp = markerDraft?.id === c.id ? markerDraft.span : spanOf(c.timestamp ?? 0, c.duration);
+              const startPct = (sp.start / duration) * 100;
+              const endPct = ((sp.end ?? sp.start) / duration) * 100;
+              const done = c.completed ? ' mp-marker--done' : '';
+              const editable = !!c.canEdit && !!onCommentTimeChange;
+              const tip = `${formatTimecode(sp.start)}${sp.end !== null ? ` → ${formatTimecode(sp.end)}` : ''} — ${c.authorName}: ${c.text}`;
+              const dot = (edge: SpanEdge, pct: number) => editable ? (
+                <button key={edge} type="button" className={`mp-dot mp-dot--edit${done}`} style={{ left: `${pct}%` }} title={tip}
+                  aria-label={`${edge === 'start' ? 'Comment' : 'Comment end'} at ${formatTimecode(edge === 'start' ? sp.start : (sp.end ?? sp.start))}`}
+                  onPointerDown={(e) => beginSpanDrag(e, c.id, edge, sp)}
+                  onPointerMove={moveSpanDrag}
+                  onPointerUp={endSpanDrag}
+                  onPointerCancel={endSpanDrag}
+                  onClick={(e) => e.stopPropagation()} />
               ) : (
-                <button key={c.id} type="button" className={`mp-tick${c.completed ? ' mp-tick--done' : ''}`}
-                  style={{ left: `${pct}%` }} title={tip}
-                  onClick={(e) => { e.stopPropagation(); seekTo(c.timestamp ?? 0); }}
-                  aria-label={`Comment at ${formatTimecode(c.timestamp ?? 0)}`} />
+                <button key={edge} type="button" className={`mp-dot${done}`} style={{ left: `${pct}%` }} title={tip}
+                  aria-label={`Comment at ${formatTimecode(sp.start)}`}
+                  onClick={(e) => { e.stopPropagation(); seekTo(sp.start); }} />
+              );
+              return (
+                <Fragment key={c.id}>
+                  {sp.end !== null && (
+                    <button type="button" className={`mp-range${c.completed ? ' mp-range--done' : ''}`}
+                      style={{ left: `${startPct}%`, width: `${endPct - startPct}%` }} title={tip}
+                      onClick={(e) => { e.stopPropagation(); seekTo(sp.start); }}
+                      aria-label={`Comment range at ${formatTimecode(sp.start)}`} />
+                  )}
+                  {dot('start', startPct)}
+                  {sp.end !== null && editable && dot('end', endPct)}
+                </Fragment>
               );
             })}
             {duration > 0 && pendingSpan && (() => {
               const span = pendingSpan;
               const startPct = (span.start / duration) * 100;
               const endPct = ((span.end ?? span.start) / duration) * 100;
-              const grip = (edge: 'start' | 'end', pct: number) => (
-                <button key={edge} type="button"
-                  className={`mp-pending-grip${span.end === null ? ' mp-pending-grip--pin' : ''}`}
-                  style={{ left: `${pct}%` }}
-                  title="Drag to set a range"
-                  aria-label={edge === 'start' ? 'Comment in-point' : 'Comment out-point'}
-                  onPointerDown={(e) => handleSpanPointerDown(edge, e)}
-                  onPointerMove={handleSpanPointerMove}
+              const dot = (edge: SpanEdge, pct: number) => (
+                <button key={edge} type="button" className="mp-dot mp-dot--pending" style={{ left: `${pct}%` }}
+                  aria-label={edge === 'start' ? 'New comment' : 'New comment end'}
+                  onPointerDown={(e) => beginSpanDrag(e, null, edge, span)}
+                  onPointerMove={moveSpanDrag}
                   onPointerUp={endSpanDrag}
                   onPointerCancel={endSpanDrag}
                   onMouseDown={(e) => e.preventDefault()}
@@ -540,16 +557,15 @@ export function Player({ src, markers = [], seekTarget, onSeekHandled, onCurrent
                 <>
                   {span.end !== null && (
                     <div className="mp-pending" style={{ left: `${startPct}%`, width: `${endPct - startPct}%` }}
-                      title="Drag to move"
-                      onPointerDown={handleSpanMoveDown}
-                      onPointerMove={handleSpanMoveMove}
-                      onPointerUp={handleSpanMoveUp}
-                      onPointerCancel={handleSpanMoveUp}
+                      onPointerDown={(e) => beginSpanDrag(e, null, 'move', span)}
+                      onPointerMove={moveSpanDrag}
+                      onPointerUp={endSpanDrag}
+                      onPointerCancel={endSpanDrag}
                       onMouseDown={(e) => e.preventDefault()}
                       onClick={(e) => e.stopPropagation()} />
                   )}
-                  {span.end !== null && grip('start', startPct)}
-                  {grip('end', endPct)}
+                  {dot('start', startPct)}
+                  {span.end !== null && dot('end', endPct)}
                 </>
               );
             })()}

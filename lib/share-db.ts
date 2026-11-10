@@ -192,6 +192,16 @@ export function editComment(id: string, text: string): void {
   })();
 }
 
+/** Move a top-level comment's time / span (dragged on the scrub bar). LPOS pulls it as an edit. */
+export function editCommentTimes(id: string, timestamp: number, duration: number | null): void {
+  const conn = db();
+  conn.transaction(() => {
+    conn.prepare('UPDATE comments SET timestamp_s = ?, duration_s = ?, updated_at = ? WHERE id = ? AND parent_id IS NULL')
+      .run(timestamp, duration, new Date().toISOString(), id);
+    logEvent(id, 'edit');
+  })();
+}
+
 export function deleteComment(id: string): void {
   const conn = db();
   conn.transaction(() => {

@@ -44,6 +44,7 @@ export function ShareViewer({ model, solo = false, initialAssetId }: Readonly<{ 
   const [seekTarget, setSeekTarget] = useState<number | null>(null);
   const [composeSpan, setComposeSpan] = useState<CommentSpan | null>(null);
   const [pauseSignal, setPauseSignal] = useState(0);
+  const timeEditRef = useRef<((id: string, timestamp: number, duration: number | null) => Promise<boolean>) | null>(null);
   const [markers, setMarkers] = useState<PlayerMarker[]>([]);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
@@ -85,7 +86,7 @@ export function ShareViewer({ model, solo = false, initialAssetId }: Readonly<{ 
   useEffect(() => { setMarkers([]); setComposeSpan(null); }, [item?.assetId]);
   const onComments = useCallback((list: ViewComment[]) => {
     setMarkers(list.filter((c) => !c.parentId).map((c) => ({
-      id: c.id, timestamp: c.timestamp, duration: c.duration, completed: c.completed, authorName: c.authorName, text: c.text,
+      id: c.id, timestamp: c.timestamp, duration: c.duration, completed: c.completed, authorName: c.authorName, text: c.text, canEdit: c.canEdit,
     })));
   }, []);
 
@@ -208,6 +209,7 @@ export function ShareViewer({ model, solo = false, initialAssetId }: Readonly<{ 
       pendingSpan={commentsOn ? composeSpan : null}
       onPendingSpanChange={setComposeSpan}
       pauseSignal={pauseSignal}
+      onCommentTimeChange={(id, ts, dur) => timeEditRef.current?.(id, ts, dur) ?? Promise.resolve(false)}
     />
   ) : <div className="shv-empty">This video isn’t available to play yet.</div>;
 
@@ -352,6 +354,7 @@ export function ShareViewer({ model, solo = false, initialAssetId }: Readonly<{ 
                   span={composeSpan}
                   onSpanChange={setComposeSpan}
                   onComposeFocus={() => setPauseSignal((n) => n + 1)}
+                  timeEditRef={timeEditRef}
                   onSeek={(t) => setSeekTarget(t)}
                   onComments={onComments}
                 />

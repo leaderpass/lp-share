@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { resolveShareRequest } from '@/lib/share-request';
-import { createComment, deleteComment, editComment, getComment, setCommentCompleted, shareItems } from '@/lib/share-db';
+import { createComment, deleteComment, editComment, editCommentTimes, getComment, setCommentCompleted, shareItems } from '@/lib/share-db';
 import { commentAuthor } from '@/lib/viewer';
 import { isOwnComment, viewComments } from '@/lib/view';
 
@@ -60,11 +60,11 @@ export async function POST(req: Request, { params }: Ctx) {
   return NextResponse.json({ comments: viewComments(r.share, body.asset, r.viewer) });
 }
 
-/** PATCH { id, text } (author) or { id, completed } (staff). */
+/** PATCH { id, text } or { id, timestamp, duration } (author), or { id, completed } (staff). */
 export async function PATCH(req: Request, { params }: Ctx) {
   const r = resolveShareRequest(params.token);
   if (r.deny) return r.deny;
-  const body = (await req.json().catch(() => null)) as { id?: string; text?: string; completed?: boolean } | null;
+  const body = (await req.json().catch(() => null)) as { id?: string; text?: string; completed?: boolean; timestamp?: number; duration?: number | null } | null;
   const c = body?.id ? getComment(body.id) : null;
   if (!c || c.share_id !== r.share.id || c.deleted_at || (c.internal && !r.viewer.staff)) {
     return NextResponse.json({ error: 'That comment is gone.' }, { status: 404 });
@@ -72,6 +72,13 @@ export async function PATCH(req: Request, { params }: Ctx) {
   if (typeof body!.completed === 'boolean') {
     if (!r.viewer.staff) return NextResponse.json({ error: 'Only LeaderPass staff can do that.' }, { status: 403 });
     setCommentCompleted(c.id, body!.completed);
+  } else if (typeof body!.timestamp === 'number') {
+    if (!isOwnComment(c, r.viewer)) return NextResponse.json({ error: 'You can only move your own comments.' }, { status: 403 });
+    if (c.parent_id) return NextResponse.json({ error: 'Replies have no time.' }, { status: 400 });
+    const ts = body!.timestamp;
+    if (!isFinite(ts) || ts < 0) return NextResponse.json({ error: 'That time isn’t valid.' }, { status: 400 });
+    const dur = typeof body!.duration === 'number' && isFinite(body!.duration) && body!.duration > 0 ? body!.duration : null;
+    editCommentTimes(c.id, ts, dur);
   } else {
     const text = (body!.text ?? '').trim().slice(0, MAX_TEXT);
     if (!text) return NextResponse.json({ error: 'Write something first.' }, { status: 400 });
