@@ -46,6 +46,18 @@ export function ShareViewer({ model, solo = false, initialAssetId }: Readonly<{ 
 
   // Library sort + filter (shown on shares with 2+ videos). Sorts within each group.
   const [sortKey, setSortKey] = useState<SortKey>('default');
+  // The viewer's sort choice is remembered per share in this browser.
+  const sortStoreKey = `lp-share:sort:${share.token}`;
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem(sortStoreKey);
+      if (v && (v === 'default' || v in SORTERS)) setSortKey(v as SortKey);
+    } catch { /* private mode etc. */ }
+  }, [sortStoreKey]);
+  const chooseSort = (k: SortKey) => {
+    setSortKey(k);
+    try { localStorage.setItem(sortStoreKey, k); } catch { /* private mode etc. */ }
+  };
   const [query, setQuery] = useState('');
   const groups = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -250,7 +262,7 @@ export function ShareViewer({ model, solo = false, initialAssetId }: Readonly<{ 
     <div className="shv-libtools">
       <input type="search" className="shv-libtools-q" placeholder="Filter" value={query}
         onChange={(e) => setQuery(e.target.value)} aria-label="Filter videos" />
-      <select className="shv-libtools-sort" value={sortKey} onChange={(e) => setSortKey(e.target.value as SortKey)} aria-label="Sort videos">
+      <select className="shv-libtools-sort" value={sortKey} onChange={(e) => chooseSort(e.target.value as SortKey)} aria-label="Sort videos">
         <option value="default">Default order</option>
         <option value="name">Name A–Z</option>
         <option value="name-desc">Name Z–A</option>
