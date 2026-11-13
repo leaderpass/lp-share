@@ -821,3 +821,20 @@ span.shv-thumb { background: linear-gradient(135deg, rgba(219, 175, 95, 0.16), r
 }
 .mp-rate-opt:hover{ background: rgba(255,255,255,0.1); color: #fff; }
 .mp-rate-opt--on{ color: #c9a84c; font-weight: 700; }
+
+/* Library sort + filter */
+.shv-libtools{ display: flex; gap: 6px; padding: 0 0 8px; flex: none; }
+.shv-libtools-q, .shv-libtools-sort{
+  height: 30px; min-width: 0; padding: 0 10px; border-radius: 8px; font: inherit; font-size: 12.5px;
+  border: 1px solid var(--line); background: var(--surface-inset); color: var(--text);
+}
+.shv-libtools-q{ flex: 1; }
+.shv-libtools-q::placeholder{ color: var(--muted-soft); }
+.shv-libtools-sort{ flex: none; cursor: pointer; padding-right: 6px; }
+.shv-libtools-q:focus, .shv-libtools-sort:focus{ outline: none; border-color: rgba(219, 175, 95, 0.55); box-shadow: var(--focus-ring); }
+.shv-lib-empty{ padding: 14px 6px; font-size: 0.8rem; color: var(--muted-soft); }
+@media (max-width: 980px){
+  .shv-lib{ flex-wrap: wrap; }
+  .shv-libtools{ flex-basis: 100%; padding-bottom: 4px; }
+  .shv-lib > .shv-group{ flex-wrap: nowrap; }
+}

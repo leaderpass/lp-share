@@ -29,11 +29,34 @@ function saveName(n: string) {
 
 type MenuItem = { label: string; onClick: () => void } | 'sep';
 
+type SortKey = 'default' | 'name' | 'name-desc' | 'dur' | 'dur-desc';
+const byName = (a: ViewItem, b: ViewItem) => a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' });
+// Unknown durations always sort last.
+const byDur = (dir: 1 | -1) => (a: ViewItem, b: ViewItem) =>
+  a.duration == null ? (b.duration == null ? 0 : 1) : b.duration == null ? -1 : (a.duration - b.duration) * dir || byName(a, b);
+const SORTERS: Record<Exclude<SortKey, 'default'>, (a: ViewItem, b: ViewItem) => number> = {
+  name: byName, 'name-desc': (a, b) => byName(b, a), dur: byDur(1), 'dur-desc': byDur(-1),
+};
+
 export function ShareViewer({ model, solo = false, initialAssetId }: Readonly<{ model: ViewModel; solo?: boolean; initialAssetId?: string }>) {
   const { share, viewer } = model;
   const caps = share.caps;
   const items = useMemo(() => model.groups.flatMap((g) => g.items), [model.groups]);
   const staff = !!viewer.staff;
+
+  // Library sort + filter (shown on shares with 2+ videos). Sorts within each group.
+  const [sortKey, setSortKey] = useState<SortKey>('default');
+  const [query, setQuery] = useState('');
+  const groups = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return model.groups
+      .map((g) => {
+        let list = q ? g.items.filter((i) => i.title.toLowerCase().includes(q)) : g.items;
+        if (sortKey !== 'default') list = [...list].sort(SORTERS[sortKey]);
+        return { ...g, items: list };
+      })
+      .filter((g) => g.items.length > 0);
+  }, [model.groups, sortKey, query]);
 
   // ?v=<assetId> opens at that video (e.g. from an LPOS bell notification).
   const [assetId, setAssetId] = useState<string | null>(
@@ -223,6 +246,20 @@ export function ShareViewer({ model, solo = false, initialAssetId }: Readonly<{ 
     );
   }
 
+  const listTools = (
+    <div className="shv-libtools">
+      <input type="search" className="shv-libtools-q" placeholder="Filter" value={query}
+        onChange={(e) => setQuery(e.target.value)} aria-label="Filter videos" />
+      <select className="shv-libtools-sort" value={sortKey} onChange={(e) => setSortKey(e.target.value as SortKey)} aria-label="Sort videos">
+        <option value="default">Default order</option>
+        <option value="name">Name A–Z</option>
+        <option value="name-desc">Name Z–A</option>
+        <option value="dur">Shortest first</option>
+        <option value="dur-desc">Longest first</option>
+      </select>
+    </div>
+  );
+
   // Player off: a plain list of the videos with their download buttons (for
   // videos deliberately kept off Cloudflare, so there's nothing to stream).
   if (!caps.player) {
@@ -230,7 +267,8 @@ export function ShareViewer({ model, solo = false, initialAssetId }: Readonly<{ 
       <div className="shv-root">
         {header}
         <main className="shv-list">
-          {model.groups.map((g, gi) => (
+          {items.length > 1 && listTools}
+          {groups.map((g, gi) => (
             <div key={g.title ?? `g${gi}`} className="shv-group">
               {g.title && <div className="shv-cat">{g.title}</div>}
               {g.items.map((i) => (
@@ -259,6 +297,7 @@ export function ShareViewer({ model, solo = false, initialAssetId }: Readonly<{ 
               ))}
             </div>
           ))}
+          {items.length > 1 && groups.length === 0 && <div className="shv-lib-empty">No matches</div>}
         </main>
         {!staff && (
           <footer className="shv-foot">
@@ -280,7 +319,8 @@ export function ShareViewer({ model, solo = false, initialAssetId }: Readonly<{ 
       <div className={cols}>
         {showLib && (
           <nav className="shv-lib" aria-label="Videos">
-            {model.groups.map((g, gi) => (
+            {listTools}
+            {groups.map((g, gi) => (
               <div key={g.title ?? `g${gi}`} className="shv-group">
                 {g.title && <div className="shv-cat">{g.title}</div>}
                 {g.items.map((i) => (
@@ -310,6 +350,7 @@ export function ShareViewer({ model, solo = false, initialAssetId }: Readonly<{ 
                 ))}
               </div>
             ))}
+            {groups.length === 0 && <div className="shv-lib-empty">No matches</div>}
           </nav>
         )}
 
