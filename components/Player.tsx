@@ -1,33 +1,29 @@
 'use client';
 
-import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useHlsPlayer } from '@/hooks/useHlsPlayer';
-import { formatTimecode } from '@/lib/format';
-import { type CommentSpan, type SpanEdge, snapToFrame, dragSpanEdge, spanDuration, spanOf } from '@/lib/comment-span';
+import { type CommentSpan } from '@/lib/comment-span';
+import { type BarMarker } from '@/lib/review-bar';
+import { ReviewBar } from './ReviewBar';
 
 /**
  * The share player — LPOS's MediaPlayer (compact variant) ported for LP Share:
- * Cloudflare HLS, comment ticks/ranges on the scrub bar, scrub thumbnails from
- * Cloudflare, hold-right-half-to-speed-up, quality toggle, fullscreen.
+ * Cloudflare HLS, the review bar (components/ReviewBar.tsx) with hover
+ * thumbnails from Cloudflare, hold-right-half-to-speed-up, speed + shortcut
+ * menus, quality toggle, fullscreen, and keyboard control.
  * (LPOS's theater mode and in-player comment panel are not part of this app.)
  */
 
-export interface PlayerMarker {
-  id: string;
-  timestamp: number | null;
-  duration: number | null;
-  completed: boolean;
-  authorName: string;
-  text: string;
-  /** The viewer wrote it: its dots drag to move it / set a span. */
-  canEdit?: boolean;
-}
+export type PlayerMarker = BarMarker;
+
+/** Jump the player to `t`; `play` false leaves it paused there (picking a comment). */
+export interface SeekRequest { t: number; play: boolean }
 
 interface Props {
   /** Cloudflare HLS manifest URL. */
   src: string;
   markers?: PlayerMarker[];
-  seekTarget?: number | null;
+  seekTarget?: SeekRequest | null;
   onSeekHandled?: () => void;
   onCurrentTimeChange?: (t: number) => void;
   /** Span the compose box is drafting; drawn on the scrub bar with draggable edges. */
@@ -35,8 +31,11 @@ interface Props {
   onPendingSpanChange?: (span: CommentSpan) => void;
   /** Bump to pause playback (e.g. the compose box took focus). */
   pauseSignal?: number;
-  /** Save a comment's new time/span (dragged on the scrub bar); resolves false on failure. */
-  onCommentTimeChange?: (id: string, timestamp: number, duration: number | null) => Promise<boolean>;
+  /** The comment picked on the bar or in the list (highlighted on the bar). */
+  selectedId?: string | null;
+  onSelect?: (id: string) => void;
+  /** Ctrl/⌘-drag marked a range: focus the comment box. Omit to turn it off. */
+  onSpanMarked?: () => void;
 }
 
 const RATE_OPTIONS = [0.5, 1, 1.5, 2] as const; // speed menu
@@ -45,8 +44,16 @@ const SPEED_HOLD_MS = 200;
 const THUMB_TARGET_S = 2.5;
 const THUMB_GRID_CAP = 60;
 const THUMB_GRID_MIN = 8;
-const THUMB_SETTLE_MS = 150;
-const THUMB_HALF_W = 80;
+const FRAME = 1 / 24;
+const SHORTCUTS: [string, string][] = [
+  ['Space', 'Play / pause'],
+  ['← →', 'Back / forward one frame'],
+  ['Shift ← →', 'Back / forward one second'],
+  ['I', 'Comment starts here'],
+  ['O', 'Comment ends here'],
+  ['Ctrl/⌘ drag', 'Mark a range on the bar'],
+  ['Esc', 'Clear the comment time'],
+];
 
 /** MM:SS:FF at 24 fps */
 function fmtTc(s: number): string {
@@ -61,9 +68,8 @@ function cfThumb(hlsUrl: string, t: number): string {
   return `${base}/thumbnails/thumbnail.jpg?time=${Math.max(0, Math.round(t))}s&height=180`;
 }
 
-export function Player({ src, markers = [], seekTarget, onSeekHandled, onCurrentTimeChange, pendingSpan = null, onPendingSpanChange, pauseSignal, onCommentTimeChange }: Readonly<Props>) {
+export function Player({ src, markers = [], seekTarget, onSeekHandled, onCurrentTimeChange, pendingSpan = null, onPendingSpanChange, pauseSignal, selectedId = null, onSelect, onSpanMarked }: Readonly<Props>) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const scrubRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const speedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -72,19 +78,13 @@ export function Player({ src, markers = [], seekTarget, onSeekHandled, onCurrent
   const holdLevelsRef = useRef<number[]>([]);
   const speedStartYRef = useRef(0);
   const speedLockedRef = useRef(false);
-  const draggingRef = useRef(false);
-  const wasPlayingRef = useRef(false);
-  const movedRef = useRef(false);
   const speedGestureRef = useRef(false);
   const gridTimesRef = useRef<number[]>([]);
-  const settleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [videoAspect, setVideoAspect] = useState<number | null>(null);
-  const [scrubPreview, setScrubPreview] = useState<{ t: number; x: number } | null>(null);
-  const [scrubExact, setScrubExact] = useState(false);
   const [buffered, setBuffered] = useState(0);
   const [muted, setMuted] = useState(false);
   const [volume, setVolume] = useState(1);
@@ -97,6 +97,9 @@ export function Player({ src, markers = [], seekTarget, onSeekHandled, onCurrent
   const [rateMenuOpen, setRateMenuOpen] = useState(false);
   const rateRef = useRef(1);
   const rateMenuRef = useRef<HTMLDivElement>(null);
+  const [keysOpen, setKeysOpen] = useState(false);
+  const keysMenuRef = useRef<HTMLDivElement>(null);
+  const [barBusy, setBarBusy] = useState(false);
   const [rightHover, setRightHover] = useState(false);
   const [ctrlsVisible, setCtrlsVisible] = useState(true);
   const [unavailable, setUnavailable] = useState(false);
@@ -149,15 +152,15 @@ export function Player({ src, markers = [], seekTarget, onSeekHandled, onCurrent
   useEffect(() => () => {
     if (holdTimerRef.current) clearTimeout(holdTimerRef.current);
     if (speedTimerRef.current) clearInterval(speedTimerRef.current);
-    if (settleTimerRef.current) clearTimeout(settleTimerRef.current);
   }, []);
 
   useEffect(() => {
     if (seekTarget == null) return;
     const v = videoRef.current;
     if (!v) return;
-    v.currentTime = seekTarget;
-    void v.play();
+    v.currentTime = seekTarget.t;
+    setCurrentTime(seekTarget.t);
+    if (seekTarget.play) void v.play(); else v.pause();
     onSeekHandled?.();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seekTarget]);
@@ -167,19 +170,7 @@ export function Player({ src, markers = [], seekTarget, onSeekHandled, onCurrent
     videoRef.current?.pause();
   }, [pauseSignal]);
 
-  // ── Scrub bar ───────────────────────────────────────────────────────────────
-  function scrubTimeFromX(clientX: number): number | null {
-    const el = scrubRef.current;
-    if (!el || !duration) return null;
-    const rect = el.getBoundingClientRect();
-    return Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)) * duration;
-  }
-  function scrubPreviewX(clientX: number): number {
-    const el = scrubRef.current;
-    if (!el) return 0;
-    const rect = el.getBoundingClientRect();
-    return Math.max(THUMB_HALF_W, Math.min(rect.width - THUMB_HALF_W, clientX - rect.left));
-  }
+  // ── Review bar ──────────────────────────────────────────────────────────────
   function nearestGridTime(t: number): number {
     const grid = gridTimesRef.current;
     if (!grid.length) return t;
@@ -187,131 +178,50 @@ export function Player({ src, markers = [], seekTarget, onSeekHandled, onCurrent
     for (let i = 1; i < grid.length; i += 1) { const d = Math.abs(t - grid[i]); if (d < bestD) { bestD = d; best = grid[i]; } }
     return best;
   }
-  function scheduleSettle() {
-    setScrubExact(false);
-    if (settleTimerRef.current) clearTimeout(settleTimerRef.current);
-    settleTimerRef.current = setTimeout(() => setScrubExact(true), THUMB_SETTLE_MS);
-  }
-  function endScrubPreview() {
-    setScrubPreview(null); setScrubExact(false);
-    if (settleTimerRef.current) { clearTimeout(settleTimerRef.current); settleTimerRef.current = null; }
-  }
-  function handleScrubPointerDown(e: React.PointerEvent<HTMLDivElement>) {
-    const v = videoRef.current;
-    if (!v || !duration) return;
-    if ((e.target as HTMLElement).closest('.mp-dot, .mp-range, .mp-pending')) return;
-    e.stopPropagation();
-    const t = scrubTimeFromX(e.clientX);
-    if (t === null) return;
-    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* ignore */ }
-    draggingRef.current = true;
-    wasPlayingRef.current = !v.paused && !v.ended;
-    movedRef.current = false;
-    v.currentTime = t;
-    setCurrentTime(t);
-    setScrubPreview({ t, x: scrubPreviewX(e.clientX) });
-    scheduleSettle();
-  }
-  function handleScrubPointerMove(e: React.PointerEvent<HTMLDivElement>) {
-    if (!draggingRef.current) return;
-    if (e.buttons === 0) {   // a missed pointer-up left capture stuck — release it
-      try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
-      draggingRef.current = false;
-      endScrubPreview();
-      return;
-    }
-    const v = videoRef.current;
-    if (!v || !duration) return;
-    const t = scrubTimeFromX(e.clientX);
-    if (t === null) return;
-    if (!movedRef.current) { movedRef.current = true; if (!v.paused) v.pause(); }
-    v.currentTime = t;
-    setCurrentTime(t);
-    setScrubPreview({ t, x: scrubPreviewX(e.clientX) });
-    scheduleSettle();
-  }
-  function endScrubDrag(e: React.PointerEvent<HTMLDivElement>) {
-    if (!draggingRef.current) return;
-    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
-    draggingRef.current = false;
-    endScrubPreview();
+  function seekBar(t: number) {
     const v = videoRef.current;
     if (!v) return;
-    if (!movedRef.current || wasPlayingRef.current) void v.play();
-    movedRef.current = false;
+    v.currentTime = t;
+    setCurrentTime(t);
+    onCurrentTimeChange?.(t);
   }
-  // ── Comment markers + drafted span: dragging ────────────────────────────────
-  // One gesture for the drafted span (its dots, and its middle to slide it) and
-  // for the viewer's own posted comments (their dots). Edges never cross; a
-  // single moment's dot pulls out an out-point. A press that doesn't move is a
-  // click (posted comment: jump there). The video seeks to the dragged edge.
-  interface SpanDrag {
-    target: string | null; // comment id, or null = the drafted span
-    mode: SpanEdge | 'move';
-    base: CommentSpan;
-    x0: number;
-    t0: number;
-    moved: boolean;
-    last: CommentSpan;
-  }
-  const spanDragRef = useRef<SpanDrag | null>(null);
-  const [markerDraft, setMarkerDraft] = useState<{ id: string; span: CommentSpan } | null>(null);
-  useEffect(() => { setMarkerDraft(null); }, [markers]);
-
-  function beginSpanDrag(e: React.PointerEvent<HTMLElement>, target: string | null, mode: SpanEdge | 'move', base: CommentSpan) {
-    e.stopPropagation();
-    e.preventDefault();
-    const t = scrubTimeFromX(e.clientX);
-    if (t === null) return;
-    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* ignore */ }
-    spanDragRef.current = { target, mode, base, x0: e.clientX, t0: t, moved: false, last: base };
-  }
-  function moveSpanDrag(e: React.PointerEvent<HTMLElement>) {
-    const d = spanDragRef.current;
-    if (!d) return;
-    if (e.buttons === 0) { endSpanDrag(e); return; }
-    if (!d.moved && Math.abs(e.clientX - d.x0) < 3) return;
-    const t = scrubTimeFromX(e.clientX);
+  function togglePlay() {
     const v = videoRef.current;
-    if (t === null || !v) return;
-    if (!d.moved) { d.moved = true; if (!v.paused) v.pause(); }
-    let next: CommentSpan;
-    let shown: number;
-    if (d.mode === 'move') {
-      const len = (d.base.end ?? d.base.start) - d.base.start;
-      const start = Math.max(0, Math.min(duration - len, snapToFrame(d.base.start + t - d.t0)));
-      next = { start, end: d.base.end === null ? null : start + len };
-      shown = start;
-    } else {
-      next = dragSpanEdge(d.base, d.mode, t, duration);
-      shown = d.mode === 'start' || next.end === null ? next.start : next.end;
+    if (v) { if (v.paused) void v.play(); else v.pause(); }
+  }
+
+  // ── Keyboard ────────────────────────────────────────────────────────────────
+  // Space plays/pauses; ← → step a frame, Shift ← → a second. (I / O / Esc for
+  // the comment's time live with the comment box.) Ignored while typing.
+  const durationRef = useRef(0);
+  durationRef.current = duration;
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape' && (rateMenuOpen || keysOpen)) { setRateMenuOpen(false); setKeysOpen(false); return; }
+      if (e.metaKey || e.ctrlKey || e.altKey || e.defaultPrevented) return;
+      const el = document.activeElement as HTMLElement | null;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)) return;
+      const v = videoRef.current;
+      if (!v) return;
+      if (e.key === ' ' || e.code === 'Space') {
+        if (el?.tagName === 'BUTTON' || el?.getAttribute('role') === 'button') return; // let the focused button act
+        e.preventDefault();
+        if (v.paused) void v.play(); else v.pause();
+      } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        e.preventDefault();
+        v.pause();
+        const step = (e.shiftKey ? 1 : FRAME) * (e.key === 'ArrowLeft' ? -1 : 1);
+        const t = Math.max(0, Math.min(durationRef.current || Infinity, v.currentTime + step));
+        v.currentTime = t;
+        setCurrentTime(t);
+        onCurrentTimeChange?.(t);
+        showControls();
+      }
     }
-    d.last = next;
-    if (d.target === null) onPendingSpanChange?.(next);
-    else setMarkerDraft({ id: d.target, span: next });
-    v.currentTime = shown;
-    setCurrentTime(shown);
-    setScrubPreview({ t: shown, x: scrubPreviewX(e.clientX) });
-    scheduleSettle();
-  }
-  function endSpanDrag(e: React.PointerEvent<HTMLElement>) {
-    const d = spanDragRef.current;
-    if (!d) return;
-    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
-    spanDragRef.current = null;
-    endScrubPreview();
-    if (d.target === null) return;
-    if (!d.moved) { setMarkerDraft(null); seekTo(d.base.start); return; }
-    if ((d.last.start === d.base.start && d.last.end === d.base.end) || !onCommentTimeChange) { setMarkerDraft(null); return; }
-    void onCommentTimeChange(d.target, d.last.start, spanDuration(d.last)).then((ok) => { if (!ok) setMarkerDraft(null); });
-  }
-
-  function seekTo(ts: number) {
-    const v = videoRef.current;
-    if (!v) return;
-    v.currentTime = ts;
-    void v.play();
-  }
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rateMenuOpen, keysOpen]);
 
   // ── Speed hold (press and hold the right half) ──────────────────────────────
   // One speed: `rate` is what the menu shows and playback rests at. A hold
@@ -383,11 +293,14 @@ export function Player({ src, markers = [], seekTarget, onSeekHandled, onCurrent
     setRateMenuOpen(false);
   }
   useEffect(() => {
-    if (!rateMenuOpen) return;
-    const onDown = (e: PointerEvent) => { if (!rateMenuRef.current?.contains(e.target as Node)) setRateMenuOpen(false); };
+    if (!rateMenuOpen && !keysOpen) return;
+    const onDown = (e: PointerEvent) => {
+      if (!rateMenuRef.current?.contains(e.target as Node)) setRateMenuOpen(false);
+      if (!keysMenuRef.current?.contains(e.target as Node)) setKeysOpen(false);
+    };
     document.addEventListener('pointerdown', onDown);
     return () => document.removeEventListener('pointerdown', onDown);
-  }, [rateMenuOpen]);
+  }, [rateMenuOpen, keysOpen]);
 
   function handleVolumeChange(val: number) {
     const v = videoRef.current;
@@ -411,7 +324,7 @@ export function Player({ src, markers = [], seekTarget, onSeekHandled, onCurrent
     setBuffered(v.buffered.end(v.buffered.length - 1));
   }
 
-  const timed = markers.filter((c) => c.timestamp !== null);
+  const ctrlsShown = ctrlsVisible || !!pendingSpan || rateMenuOpen || keysOpen || barBusy;
 
   return (
     <div
@@ -491,103 +404,33 @@ export function Player({ src, markers = [], seekTarget, onSeekHandled, onCurrent
         </div>
       )}
 
-      <div className={`mp-controls-bar${ctrlsVisible || pendingSpan || rateMenuOpen ? ' mp-controls-bar--visible' : ''}`}>
-        <div
-          ref={scrubRef}
-          className="mp-scrub"
-          onPointerDown={handleScrubPointerDown}
-          onPointerMove={handleScrubPointerMove}
-          onPointerUp={endScrubDrag}
-          onPointerCancel={endScrubDrag}
-          style={{ touchAction: 'none' }}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div className="mp-scrub-track">
-            <div className="mp-scrub-buffered" style={{ width: duration ? `${(buffered / duration) * 100}%` : '0%' }} />
-            <div className="mp-scrub-fill" style={{ width: duration ? `${(currentTime / duration) * 100}%` : '0%' }} />
-            <div className="mp-scrub-head" style={{ left: duration ? `${(currentTime / duration) * 100}%` : '0%' }} />
-            {duration > 0 && timed.map((c) => {
-              const sp = markerDraft?.id === c.id ? markerDraft.span : spanOf(c.timestamp ?? 0, c.duration);
-              const startPct = (sp.start / duration) * 100;
-              const endPct = ((sp.end ?? sp.start) / duration) * 100;
-              const done = c.completed ? ' mp-marker--done' : '';
-              const editable = !!c.canEdit && !!onCommentTimeChange;
-              const tip = `${formatTimecode(sp.start)}${sp.end !== null ? ` → ${formatTimecode(sp.end)}` : ''} — ${c.authorName}: ${c.text}`;
-              const dot = (edge: SpanEdge, pct: number) => editable ? (
-                <button key={edge} type="button" className={`mp-dot mp-dot--edit${done}`} style={{ left: `${pct}%` }} title={tip}
-                  aria-label={`${edge === 'start' ? 'Comment' : 'Comment end'} at ${formatTimecode(edge === 'start' ? sp.start : (sp.end ?? sp.start))}`}
-                  onPointerDown={(e) => beginSpanDrag(e, c.id, edge, sp)}
-                  onPointerMove={moveSpanDrag}
-                  onPointerUp={endSpanDrag}
-                  onPointerCancel={endSpanDrag}
-                  onClick={(e) => e.stopPropagation()} />
-              ) : (
-                <button key={edge} type="button" className={`mp-dot${done}`} style={{ left: `${pct}%` }} title={tip}
-                  aria-label={`Comment at ${formatTimecode(sp.start)}`}
-                  onClick={(e) => { e.stopPropagation(); seekTo(sp.start); }} />
-              );
-              return (
-                <Fragment key={c.id}>
-                  {sp.end !== null && (
-                    <button type="button" className={`mp-range${c.completed ? ' mp-range--done' : ''}`}
-                      style={{ left: `${startPct}%`, width: `${endPct - startPct}%` }} title={tip}
-                      onClick={(e) => { e.stopPropagation(); seekTo(sp.start); }}
-                      aria-label={`Comment range at ${formatTimecode(sp.start)}`} />
-                  )}
-                  {dot('start', startPct)}
-                  {sp.end !== null && editable && dot('end', endPct)}
-                </Fragment>
-              );
-            })}
-            {duration > 0 && pendingSpan && (() => {
-              const span = pendingSpan;
-              const startPct = (span.start / duration) * 100;
-              const endPct = ((span.end ?? span.start) / duration) * 100;
-              const dot = (edge: SpanEdge, pct: number) => (
-                <button key={edge} type="button" className="mp-dot mp-dot--pending" style={{ left: `${pct}%` }}
-                  aria-label={edge === 'start' ? 'New comment' : 'New comment end'}
-                  onPointerDown={(e) => beginSpanDrag(e, null, edge, span)}
-                  onPointerMove={moveSpanDrag}
-                  onPointerUp={endSpanDrag}
-                  onPointerCancel={endSpanDrag}
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={(e) => e.stopPropagation()} />
-              );
-              return (
-                <>
-                  {span.end !== null && (
-                    <div className="mp-pending" style={{ left: `${startPct}%`, width: `${endPct - startPct}%` }}
-                      onPointerDown={(e) => beginSpanDrag(e, null, 'move', span)}
-                      onPointerMove={moveSpanDrag}
-                      onPointerUp={endSpanDrag}
-                      onPointerCancel={endSpanDrag}
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={(e) => e.stopPropagation()} />
-                  )}
-                  {dot('start', startPct)}
-                  {span.end !== null && dot('end', endPct)}
-                </>
-              );
-            })()}
-          </div>
-          {scrubPreview && (
-            <div className="mp-scrub-thumb-wrap" style={{ left: scrubPreview.x }} aria-hidden>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                className="mp-scrub-thumb"
-                src={thumbnailUrl(scrubExact ? scrubPreview.t : nearestGridTime(scrubPreview.t))}
-                alt=""
-                onError={(e) => { e.currentTarget.style.display = 'none'; }}
-                onLoad={(e) => { e.currentTarget.style.display = 'block'; }}
-              />
-              <span className="mp-scrub-thumb-tc">{fmtTc(scrubPreview.t)}</span>
-            </div>
-          )}
-        </div>
+      {!ctrlsShown && duration > 0 && (
+        <div className="mp-progress-line" aria-hidden><div style={{ width: `${(currentTime / duration) * 100}%` }} /></div>
+      )}
+
+      <div className={`mp-controls-bar${ctrlsShown ? ' mp-controls-bar--visible' : ''}`}>
+        <ReviewBar
+          duration={duration}
+          currentTime={currentTime}
+          buffered={buffered}
+          playing={playing}
+          markers={markers}
+          selectedId={selectedId}
+          onSelect={onSelect}
+          pendingSpan={pendingSpan}
+          onPendingSpanChange={onPendingSpanChange}
+          onSpanMarked={onSpanMarked}
+          onSeek={seekBar}
+          onPause={() => videoRef.current?.pause()}
+          onResume={() => { void videoRef.current?.play(); }}
+          onBusyChange={setBarBusy}
+          thumbnailUrl={thumbnailUrl}
+          nearestThumbTime={(t) => nearestGridTime(t)}
+        />
 
         <div className="mp-btn-row">
           <button type="button" className="mp-btn"
-            onClick={(e) => { e.stopPropagation(); const v = videoRef.current; if (v) { if (v.paused) void v.play(); else v.pause(); } }}
+            onClick={(e) => { e.stopPropagation(); togglePlay(); }}
             aria-label={playing ? 'Pause' : 'Play'}>
             {playing
               ? <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" /><rect x="14" y="4" width="4" height="16" /></svg>
@@ -611,7 +454,7 @@ export function Player({ src, markers = [], seekTarget, onSeekHandled, onCurrent
           </div>
           <div className="mp-rate-wrap" ref={rateMenuRef}>
             <button type="button" className={`mp-btn mp-rate-btn${(holdRate ?? rate) !== 1 ? ' mp-rate-btn--on' : ''}`}
-              onClick={(e) => { e.stopPropagation(); setRateMenuOpen((o) => !o); }}
+              onClick={(e) => { e.stopPropagation(); setKeysOpen(false); setRateMenuOpen((o) => !o); }}
               aria-label={`Playback speed ${holdRate ?? rate}×`} aria-haspopup="menu" aria-expanded={rateMenuOpen} title="Playback speed">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 14l4-4" /><path d="M3.34 19a10 10 0 1117.32 0" /></svg>
               {(holdRate ?? rate) !== 1 && <span className="mp-rate-label">{holdRate ?? rate}×</span>}
@@ -624,6 +467,22 @@ export function Player({ src, markers = [], seekTarget, onSeekHandled, onCurrent
                     {r}×
                   </button>
                 ))}
+              </div>
+            )}
+          </div>
+          <div className="mp-rate-wrap" ref={keysMenuRef}>
+            <button type="button" className="mp-btn"
+              onClick={(e) => { e.stopPropagation(); setRateMenuOpen(false); setKeysOpen((o) => !o); }}
+              aria-label="Keyboard shortcuts" aria-haspopup="dialog" aria-expanded={keysOpen} title="Keyboard shortcuts">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="6" width="20" height="12" rx="2" /><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10" /></svg>
+            </button>
+            {keysOpen && (
+              <div className="mp-keys-menu" role="dialog" aria-label="Keyboard shortcuts" onClick={(e) => e.stopPropagation()}>
+                <dl>
+                  {SHORTCUTS.map(([k, what]) => (
+                    <div key={k}><dt><kbd>{k}</kbd></dt><dd>{what}</dd></div>
+                  ))}
+                </dl>
               </div>
             )}
           </div>

@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Player, type PlayerMarker } from './Player';
+import { Player, type PlayerMarker, type SeekRequest } from './Player';
 import { Comments, type ViewComment } from './Comments';
 import { formatBytes, formatDuration } from '@/lib/format';
 import type { ViewItem, ViewModel } from '@/lib/view';
@@ -76,10 +76,12 @@ export function ShareViewer({ model, solo = false, initialAssetId }: Readonly<{ 
   );
   const [clientView, setClientView] = useState(false);
   const [sideTab, setSideTab] = useState<'comments' | 'transcript'>('comments');
-  const [seekTarget, setSeekTarget] = useState<number | null>(null);
+  const [seekTarget, setSeekTarget] = useState<SeekRequest | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [playhead, setPlayhead] = useState(0);
+  const [focusSignal, setFocusSignal] = useState(0);
   const [composeSpan, setComposeSpan] = useState<CommentSpan | null>(null);
   const [pauseSignal, setPauseSignal] = useState(0);
-  const timeEditRef = useRef<((id: string, timestamp: number, duration: number | null) => Promise<boolean>) | null>(null);
   const [markers, setMarkers] = useState<PlayerMarker[]>([]);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
@@ -118,11 +120,19 @@ export function ShareViewer({ model, solo = false, initialAssetId }: Readonly<{ 
       : sideTab === 'transcript' && transcriptsOn ? 'transcript'
       : commentsOn ? 'comments' : transcriptsOn ? 'transcript' : null;
 
-  useEffect(() => { setMarkers([]); setComposeSpan(null); }, [item?.assetId]);
+  useEffect(() => { setMarkers([]); setComposeSpan(null); setSelectedId(null); setPlayhead(0); }, [item?.assetId]);
   const onComments = useCallback((list: ViewComment[]) => {
     setMarkers(list.filter((c) => !c.parentId).map((c) => ({
-      id: c.id, timestamp: c.timestamp, duration: c.duration, completed: c.completed, authorName: c.authorName, text: c.text, canEdit: c.canEdit,
+      id: c.id, timestamp: c.timestamp, duration: c.duration, completed: c.completed, authorName: c.authorName, text: c.text,
     })));
+  }, []);
+  // Picking a comment (in the list or on the bar) goes to it and stays paused there.
+  const markersRef = useRef(markers);
+  markersRef.current = markers;
+  const selectComment = useCallback((id: string) => {
+    const m = markersRef.current.find((x) => x.id === id);
+    setSelectedId(id);
+    if (m?.timestamp != null) setSeekTarget({ t: m.timestamp, play: false });
   }, []);
 
   function flash(msg: string) {
@@ -240,11 +250,13 @@ export function ShareViewer({ model, solo = false, initialAssetId }: Readonly<{ 
       markers={commentsOn ? markers : []}
       seekTarget={seekTarget}
       onSeekHandled={() => setSeekTarget(null)}
-      onCurrentTimeChange={(t) => { timeRef.current = t; }}
+      onCurrentTimeChange={(t) => { timeRef.current = t; setPlayhead(t); }}
       pendingSpan={commentsOn ? composeSpan : null}
       onPendingSpanChange={setComposeSpan}
       pauseSignal={pauseSignal}
-      onCommentTimeChange={(id, ts, dur) => timeEditRef.current?.(id, ts, dur) ?? Promise.resolve(false)}
+      selectedId={commentsOn ? selectedId : null}
+      onSelect={commentsOn ? selectComment : undefined}
+      onSpanMarked={commentsOn ? () => setFocusSignal((n) => n + 1) : undefined}
     />
   ) : <div className="shv-empty">This video isn’t available to play yet.</div>;
 
@@ -407,12 +419,14 @@ export function ShareViewer({ model, solo = false, initialAssetId }: Readonly<{ 
                   span={composeSpan}
                   onSpanChange={setComposeSpan}
                   onComposeFocus={() => setPauseSignal((n) => n + 1)}
-                  timeEditRef={timeEditRef}
-                  onSeek={(t) => setSeekTarget(t)}
+                  playhead={playhead}
+                  selectedId={selectedId}
+                  onSelect={selectComment}
+                  focusSignal={focusSignal}
                   onComments={onComments}
                 />
               ) : (
-                <Transcript token={share.token} item={item} onSeek={(t) => setSeekTarget(t)} />
+                <Transcript token={share.token} item={item} onSeek={(t) => setSeekTarget({ t, play: true })} />
               )}
             </div>
           </aside>

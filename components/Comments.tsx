@@ -1,8 +1,9 @@
 'use client';
 
-import { type MutableRefObject, useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { formatCommentDate, formatTimecode } from '@/lib/format';
-import { type CommentSpan, snapToFrame, spanDuration, dragSpanEdge } from '@/lib/comment-span';
+import { type CommentSpan, snapToFrame, spanDuration, dragSpanEdge, spanOf } from '@/lib/comment-span';
+import { parseTimecode } from '@/lib/review-bar';
 
 /**
  * A share's comments on one video — LPOS's AssetComments section ported for
@@ -45,11 +46,20 @@ interface Props {
   onSpanChange: (span: CommentSpan | null) => void;
   /** The compose box took focus — pause the player. */
   onComposeFocus: () => void;
-  /** Filled in here so the player can save a dragged comment time through this thread. */
-  timeEditRef: MutableRefObject<((id: string, timestamp: number, duration: number | null) => Promise<boolean>) | null>;
-  onSeek: (t: number) => void;
+  /** Playhead, for the timecode the comment box follows and the "playing now" highlight. */
+  playhead: number;
+  /** The picked comment (from this list or the player's bar). */
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+  /** Bump to focus the comment box (a range was just marked on the bar). */
+  focusSignal: number;
   onComments: (c: ViewComment[]) => void;
 }
+
+type SortKey = 'time' | 'new';
+const SORT_KEY = 'lpshare.commentSort';
+/** A single-moment comment counts as "playing now" for this long. */
+const MOMENT_S = 3;
 
 const POLL_MS = 15_000;
 
@@ -65,13 +75,42 @@ const IconEdit = () => (<svg width="11" height="11" viewBox="0 0 24 24" fill="no
 const IconTrash = () => (<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" /><path d="M10 11v6" /><path d="M14 11v6" /><path d="M9 6V4h6v2" /></svg>);
 
 export function Comments({
-  token, assetId, staff, clientView, internalShare, getName, needsName, requestName, getCurrentTime, span, onSpanChange, onComposeFocus, timeEditRef, onSeek, onComments,
+  token, assetId, staff, clientView, internalShare, getName, needsName, requestName, getCurrentTime, span, onSpanChange, onComposeFocus,
+  playhead, selectedId, onSelect, focusSignal, onComments,
 }: Readonly<Props>) {
   const [list, setList] = useState<ViewComment[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [composeText, setComposeText] = useState('');
-  const [lastStart, setLastStart] = useState(0);
   const composeInputRef = useRef<HTMLInputElement>(null);
+  const composeRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const [sort, setSort] = useState<SortKey>('time');
+  useEffect(() => {
+    try { if (localStorage.getItem(SORT_KEY) === 'new') setSort('new'); } catch { /* storage off */ }
+  }, []);
+  function chooseSort(k: SortKey) {
+    setSort(k);
+    try { localStorage.setItem(SORT_KEY, k); } catch { /* storage off */ }
+  }
+  // The comment box's time: a chip that opens Point/Range + In/Out fields.
+  const [whenOpen, setWhenOpen] = useState(false);
+  const [inField, setInField] = useState('');
+  const [outField, setOutField] = useState('');
+  const [badField, setBadField] = useState<'in' | 'out' | null>(null);
+  // Moving one of your own comments: the comment box holds its time until Save.
+  const [timeEditId, setTimeEditId] = useState<string | null>(null);
+
+  useEffect(() => { if (focusSignal) composeInputRef.current?.focus(); }, [focusSignal]);
+  // A press outside the comment box closes the time menu (the player's bar doesn't: it adjusts the same time).
+  useEffect(() => {
+    if (!whenOpen) return;
+    const onDown = (e: PointerEvent) => {
+      const t = e.target as HTMLElement;
+      if (!composeRef.current?.contains(t) && !t.closest('.rb')) setWhenOpen(false);
+    };
+    document.addEventListener('pointerdown', onDown);
+    return () => document.removeEventListener('pointerdown', onDown);
+  }, [whenOpen]);
 
   // I / O keys set the comment's in- and out-point at the playhead (as in
   // Frame.io); O also focuses the compose box. Ignored while typing anywhere.
@@ -92,7 +131,6 @@ export function Comments({
         e.preventDefault();
         const t = snapToFrame(timeRef.current());
         setSpanRef.current({ start: t, end: cur?.end != null && cur.end > t ? cur.end : null });
-        setLastStart(t);
       } else if (key === 'o') {
         e.preventDefault();
         const t = snapToFrame(timeRef.current());
@@ -100,6 +138,8 @@ export function Comments({
         composeInputRef.current?.focus();
       } else if (key === 'escape' && cur) {
         setSpanRef.current(null);
+        setTimeEditId(null);
+        setWhenOpen(false);
       }
     }
     document.addEventListener('keydown', onKey);
@@ -126,7 +166,7 @@ export function Comments({
   }, [api, assetId, apply]);
 
   useEffect(() => {
-    setList(null); setError(null); setEditingId(null); setReplyingId(null); setLastStart(0);
+    setList(null); setError(null); setEditingId(null); setReplyingId(null); setTimeEditId(null); setWhenOpen(false);
     void load();
     const t = setInterval(() => { if (document.visibilityState === 'visible') void load(); }, POLL_MS);
     return () => clearInterval(t);
@@ -164,20 +204,89 @@ export function Comments({
     }
   }
 
-  // The player saves dragged comment times through this thread's send().
-  const sendRef = useRef(send);
-  sendRef.current = send;
-  useEffect(() => {
-    timeEditRef.current = (id, timestamp, duration) => sendRef.current('PATCH', { id, timestamp, duration });
-    return () => { timeEditRef.current = null; };
-  }, [timeEditRef]);
-
   async function post() {
+    if (timeEditId) {
+      if (!span) return;
+      setPosting(true);
+      if (await send('PATCH', { id: timeEditId, timestamp: span.start, duration: spanDuration(span) })) endTimeEdit();
+      setPosting(false);
+      return;
+    }
     const text = composeText.trim();
     if (!text) return;
     setPosting(true);
-    if (await send('POST', { text, timestamp: span?.start ?? lastStart, duration: span ? spanDuration(span) : null })) { setComposeText(''); onSpanChange(null); }
+    if (await send('POST', { text, timestamp: span?.start ?? snapToFrame(getCurrentTime()), duration: span ? spanDuration(span) : null })) {
+      setComposeText(''); setWhenOpen(false); onSpanChange(null);
+    }
     setPosting(false);
+  }
+  function startTimeEdit(c: ViewComment) {
+    if (c.timestamp === null) return;
+    setTimeEditId(c.id);
+    setEditingId(null);
+    onSpanChange(spanOf(c.timestamp, c.duration));
+    onSelect(c.id);
+    openWhen(spanOf(c.timestamp, c.duration));
+  }
+  function endTimeEdit() {
+    setTimeEditId(null);
+    setWhenOpen(false);
+    onSpanChange(null);
+  }
+
+  // ── The time chip's fields ──────────────────────────────────────────────────
+  function syncFields(sp: CommentSpan | null) {
+    const s0 = sp ?? { start: snapToFrame(getCurrentTime()), end: null };
+    setInField(formatTimecode(s0.start));
+    setOutField(formatTimecode(s0.end ?? s0.start));
+    setBadField(null);
+  }
+  function openWhen(sp: CommentSpan | null = span) {
+    onComposeFocus();
+    const s0 = sp ?? { start: snapToFrame(getCurrentTime()), end: null };
+    if (!sp) onSpanChange(s0);
+    syncFields(s0);
+    setWhenOpen(true);
+  }
+  // Keep the fields in step with the bar (handles dragged, I/O pressed) unless one is being typed in.
+  useEffect(() => {
+    if (!whenOpen) return;
+    const el = document.activeElement as HTMLElement | null;
+    if (el?.dataset.when === 'in' || el?.dataset.when === 'out') return;
+    syncFields(span);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [span?.start, span?.end, whenOpen]);
+  function setKind(range: boolean) {
+    const cur = span ?? { start: snapToFrame(getCurrentTime()), end: null };
+    const next = range
+      ? { start: cur.start, end: cur.end ?? snapToFrame(cur.start + 5) }
+      : { start: cur.start, end: null };
+    onSpanChange(next);
+    syncFields(next);
+  }
+  function commitField(which: 'in' | 'out') {
+    const t = parseTimecode(which === 'in' ? inField : outField);
+    if (t === null) { setBadField(which); return; }
+    setBadField(null);
+    const cur = span ?? { start: snapToFrame(getCurrentTime()), end: null };
+    const v = snapToFrame(t);
+    let next: CommentSpan;
+    if (which === 'in') {
+      next = { start: v, end: cur.end !== null && cur.end <= v ? snapToFrame(v + 1) : cur.end };
+    } else {
+      next = { start: cur.start, end: Math.max(v, snapToFrame(cur.start + 1 / 24)) };
+    }
+    onSpanChange(next);
+    syncFields(next);
+  }
+  function setNow(which: 'in' | 'out') {
+    const t = snapToFrame(getCurrentTime());
+    const cur = span ?? { start: t, end: null };
+    const next = which === 'in'
+      ? { start: t, end: cur.end !== null && cur.end <= t ? snapToFrame(t + 1) : cur.end }
+      : (t <= cur.start ? cur : { start: cur.start, end: t });
+    onSpanChange(next);
+    syncFields(next);
   }
   async function saveEdit(id: string) {
     if (!editText.trim()) return;
@@ -203,7 +312,20 @@ export function Comments({
   }
 
   const moderate = staff && !clientView;
-  const all = threads((list ?? []).filter((c) => moderate || !c.internal || internalShare));
+  const all = threads((list ?? []).filter((c) => moderate || !c.internal || internalShare)).sort((a, b) => {
+    if (sort === 'new') return b.createdAt.localeCompare(a.createdAt);
+    if (a.timestamp === null || b.timestamp === null) return (a.timestamp === null ? 1 : 0) - (b.timestamp === null ? 1 : 0) || a.createdAt.localeCompare(b.createdAt);
+    return a.timestamp - b.timestamp || a.createdAt.localeCompare(b.createdAt);
+  });
+
+  // A comment picked on the player's bar scrolls into view here.
+  useEffect(() => {
+    if (!selectedId) return;
+    const card = listRef.current?.querySelector<HTMLElement>(`[data-cid="${CSS.escape(selectedId)}"]`);
+    card?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [selectedId]);
+  const pick = (c: ViewComment) => { if (c.timestamp !== null) onSelect(c.id); };
+  const playingNow = (c: ViewComment) => c.timestamp !== null && playhead >= c.timestamp && playhead < c.timestamp + (c.duration || MOMENT_S);
 
   function header(c: ViewComment, top: boolean) {
     return (
@@ -262,16 +384,26 @@ export function Comments({
       {list === null && <p className="mad-comments-empty">Loading…</p>}
       {list !== null && all.length === 0 && <p className="mad-comments-empty">No comments yet.</p>}
 
+      {all.length > 1 && (
+        <div className="mad-comments-sort">
+          <select value={sort} onChange={(e) => chooseSort(e.target.value as SortKey)} aria-label="Sort comments">
+            <option value="time">By time in video</option>
+            <option value="new">Newest first</option>
+          </select>
+        </div>
+      )}
+
       {all.length > 0 && (
-        <div className="mad-comments-list">
+        <div className="mad-comments-list" ref={listRef}>
           {all.map((c) => (
-            <div key={c.id} className={`mad-comment${c.completed ? ' mad-comment--done' : ''}`}>
+            <div key={c.id} data-cid={c.id}
+              className={`mad-comment${c.completed ? ' mad-comment--done' : ''}${c.timestamp !== null ? ' mad-comment--seekable' : ''}${selectedId === c.id ? ' mad-comment--sel' : ''}${playingNow(c) ? ' mad-comment--now' : ''}`}
+              onClick={(e) => { if (!(e.target as HTMLElement).closest('button, input, textarea, select, a')) pick(c); }}>
               {header(c, true)}
               {/* Timecode / span on its own line so it never gets clipped. */}
               {c.timestamp !== null && (
-                <button type="button" className="mad-comment-time mad-comment-time--seek mad-comment-when" title="Jump to this moment" onClick={() => onSeek(c.timestamp!)}>
+                <button type="button" className="mad-comment-time mad-comment-time--seek mad-comment-when" title="Go to this comment" onClick={() => pick(c)}>
                   {formatTimecode(c.timestamp)}{c.duration ? ` → ${formatTimecode(c.timestamp + c.duration)}` : ''}
-                  <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" style={{ marginLeft: 3, opacity: 0.7 }}><polygon points="5 3 19 12 5 21 5 3" /></svg>
                 </button>
               )}
               {body(c)}
@@ -302,22 +434,68 @@ export function Comments({
                 </div>
               )}
               {replyingId !== c.id && (
-                <button type="button" className="mad-comment-trigger mad-reply-btn" onClick={() => { setReplyingId(c.id); setReplyText(''); }}>Reply</button>
+                <div className="mad-comment-foot">
+                  <button type="button" className="mad-comment-trigger mad-reply-btn" onClick={() => { setReplyingId(c.id); setReplyText(''); }}>Reply</button>
+                  {c.canEdit && c.timestamp !== null && timeEditId !== c.id && (
+                    <button type="button" className="mad-comment-trigger mad-reply-btn" onClick={() => startTimeEdit(c)}>Edit time</button>
+                  )}
+                </div>
               )}
             </div>
           ))}
         </div>
       )}
 
-      <div className="mad-comment-compose">
-        <div className="mad-comment-compose-ts">
-          @ {formatTimecode(span?.start ?? lastStart)}
-          {span?.end != null && <> → {formatTimecode(span.end)}</>}
-          {span && (
-            <button type="button" className="mad-compose-span-clear" onMouseDown={(e) => e.preventDefault()}
-              onClick={() => onSpanChange(null)} aria-label="Discard comment time">×</button>
-          )}
+      <div className="mad-comment-compose" ref={composeRef}>
+        {timeEditId && (
+          <div className="mad-compose-editing">
+            <span>Moving your comment</span>
+            <button type="button" className="mad-comment-trigger" onClick={endTimeEdit}>Cancel</button>
+          </div>
+        )}
+        <div className="mad-compose-when-row">
+          <div className="mad-compose-when-wrap">
+            <button type="button" className={`mad-compose-when${span ? '' : ' mad-compose-when--following'}`}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => (whenOpen ? setWhenOpen(false) : openWhen())}
+              aria-haspopup="dialog" aria-expanded={whenOpen} title="Set the comment's time">
+              @ {formatTimecode(span?.start ?? playhead)}
+              {span?.end != null && <> → {formatTimecode(span.end)}</>}
+            </button>
+            {span && !timeEditId && (
+              <button type="button" className="mad-compose-span-clear" onMouseDown={(e) => e.preventDefault()}
+                onClick={() => { setWhenOpen(false); onSpanChange(null); }} aria-label="Discard comment time">×</button>
+            )}
+            {whenOpen && (
+              <div className="mad-when-pop" role="dialog" aria-label="Comment time"
+                onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); setWhenOpen(false); } }}>
+                <div className="mad-when-kind" role="group" aria-label="Kind">
+                  <button type="button" aria-pressed={!span || span.end === null} onClick={() => setKind(false)}>Point</button>
+                  <button type="button" aria-pressed={!!span && span.end !== null} onClick={() => setKind(true)}>Range</button>
+                </div>
+                {(['in', 'out'] as const).filter((w) => w === 'in' || (span && span.end !== null)).map((w) => (
+                  <label key={w} className="mad-when-field">
+                    <span>{w === 'in' ? (span?.end != null ? 'In' : 'At') : 'Out'}</span>
+                    <input data-when={w} className={badField === w ? 'is-bad' : ''} spellCheck={false} inputMode="numeric"
+                      value={w === 'in' ? inField : outField}
+                      onChange={(e) => (w === 'in' ? setInField(e.target.value) : setOutField(e.target.value))}
+                      onFocus={(e) => { onComposeFocus(); e.currentTarget.select(); }}
+                      onBlur={() => commitField(w)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commitField(w); e.currentTarget.select(); } }} />
+                    <button type="button" className="mad-when-now" onClick={() => setNow(w)} title="Set to the playhead">Now</button>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
+        {timeEditId ? (
+          <div className="mad-comment-compose-row">
+            <button type="button" className="mad-action-btn mad-action-btn--primary" onClick={() => void post()} disabled={posting || !span}>
+              {posting ? '…' : 'Save time'}
+            </button>
+          </div>
+        ) : (
         <div className="mad-comment-compose-row">
           <input
             ref={composeInputRef}
@@ -327,17 +505,17 @@ export function Comments({
             onFocus={() => {
               onComposeFocus();
               // Keep a drafted point/range (I/O keys, drag); otherwise pin to the playhead.
-              if (!span) {
-                const start = snapToFrame(getCurrentTime());
-                onSpanChange({ start, end: null });
-                setLastStart(start);
-              }
+              if (!span) onSpanChange({ start: snapToFrame(getCurrentTime()), end: null });
             }}
-            onBlur={() => { if (!composeText.trim()) onSpanChange(null); }}
+            onBlur={(e) => {
+              // Leaving for the time chip keeps the draft; leaving the comment box with nothing written drops it.
+              if (composeRef.current?.contains(e.relatedTarget as Node | null)) return;
+              if (!composeText.trim()) { setWhenOpen(false); onSpanChange(null); }
+            }}
             onChange={(e) => setComposeText(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void post(); }
-              if (e.key === 'Escape') { setComposeText(''); setError(null); onSpanChange(null); (e.target as HTMLInputElement).blur(); }
+              if (e.key === 'Escape') { setComposeText(''); setError(null); setWhenOpen(false); onSpanChange(null); (e.target as HTMLInputElement).blur(); }
             }}
           />
           <button type="button" className="mad-comment-compose-send" onClick={() => void post()} disabled={posting || !composeText.trim()} aria-label="Post comment">
@@ -346,6 +524,7 @@ export function Comments({
             )}
           </button>
         </div>
+        )}
         {error && <span className="mad-compose-err">{error}</span>}
       </div>
     </div>
