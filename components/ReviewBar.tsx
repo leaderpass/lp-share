@@ -25,6 +25,8 @@ interface Props {
   /** Time being drafted in the comment box; drawn with drag handles. */
   pendingSpan?: CommentSpan | null;
   onPendingSpanChange?: (span: CommentSpan) => void;
+  /** A drag of the span's handles ended (save it, if it's a posted comment being moved). */
+  onPendingSpanCommit?: () => void;
   /** Ctrl/⌘-drag finished marking a range. Omit to turn Ctrl/⌘-drag off. */
   onSpanMarked?: () => void;
   onSeek: (t: number) => void;
@@ -67,7 +69,7 @@ const initial = (name: string) => (name.trim()[0] ?? '?').toUpperCase();
 
 export function ReviewBar({
   duration, currentTime, buffered, playing, markers, selectedId = null, onSelect,
-  pendingSpan = null, onPendingSpanChange, onSpanMarked, onSeek, onPause, onResume, onBusyChange,
+  pendingSpan = null, onPendingSpanChange, onPendingSpanCommit, onSpanMarked, onSeek, onPause, onResume, onBusyChange,
   thumbnailUrl, nearestThumbTime,
 }: Readonly<Props>) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -252,6 +254,7 @@ export function ReviewBar({
     setShown(null);
     if (d.kind === 'scrub' && d.moved && d.was) onResume();
     if (d.kind === 'span') onSpanMarked?.();
+    if (d.kind === 'edge') onPendingSpanCommit?.();
   }
 
   // ── hover preview ───────────────────────────────────────────────────────────
