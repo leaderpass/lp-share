@@ -338,7 +338,6 @@ export function ReviewBar({
         )}
         <div className="rb-knob" style={{ left: `${head}%` }} />
       </div>
-      <div className="rb-head" style={{ left: `${head}%` }} />
 
       {tipT !== null && <div className="rb-ghost" style={{ left: `${pct(tipT)}%` }} />}
       {tipT !== null && !cluster && (

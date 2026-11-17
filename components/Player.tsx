@@ -404,8 +404,8 @@ export function Player({ src, markers = [], seekTarget, onSeekHandled, onCurrent
         </div>
       )}
 
-      {!ctrlsShown && duration > 0 && (
-        <div className="mp-progress-line" aria-hidden><div style={{ width: `${(currentTime / duration) * 100}%` }} /></div>
+      {duration > 0 && (
+        <div className={`mp-progress-line${ctrlsShown ? "" : " mp-progress-line--on"}`} aria-hidden><div style={{ width: `${(currentTime / duration) * 100}%` }} /></div>
       )}
 
       <div className={`mp-controls-bar${ctrlsShown ? ' mp-controls-bar--visible' : ''}`}>
